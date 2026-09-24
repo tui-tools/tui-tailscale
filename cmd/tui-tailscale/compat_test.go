@@ -9,8 +9,9 @@ import (
 )
 
 // The embedded manifest is what the header reads, so its backends block
-// cannot be malformed for long.
-func TestEmbeddedManifestDeclaresItsBackend(t *testing.T) {
+// cannot be malformed for long. It declares both ends: the client and the
+// control plane.
+func TestEmbeddedManifestDeclaresItsBackends(t *testing.T) {
 	m, err := manifest.Load(tuitailscale.ManifestJSON)
 	if err != nil {
 		t.Fatalf("the embedded tool.json does not parse: %v", err)
@@ -18,27 +19,32 @@ func TestEmbeddedManifestDeclaresItsBackend(t *testing.T) {
 	if m.Name != toolName {
 		t.Errorf("manifest name = %q, want %q", m.Name, toolName)
 	}
-	backend, ok := m.Backend(backendName)
-	if !ok {
-		t.Fatalf("no %s backend in the manifest", backendName)
-	}
-	if len(backend.VersionCommand) == 0 {
-		t.Error("the backend declares no version command")
+	for _, name := range []string{backendName, backendHeadscale} {
+		backend, ok := m.Backend(name)
+		if !ok {
+			t.Fatalf("no %s backend in the manifest", name)
+		}
+		if len(backend.VersionCommand) == 0 {
+			t.Errorf("%s declares no version command", name)
+		}
 	}
 }
 
 func TestProbeCompatSkipsDemo(t *testing.T) {
-	if got := probeCompat(context.Background(), true); got.Backend != "" {
-		t.Errorf("demo probe = %+v, want the zero result", got)
+	if got := probeCompat(context.Background(), true); len(got) != 0 {
+		t.Errorf("demo probe = %+v, want nothing", got)
 	}
 }
 
 // The probe runs against whatever this machine has. It must produce a Result
-// either way — that is the promise: a compatibility probe never fails a tool.
+// per backend either way — that is the promise: a compatibility probe never
+// fails a tool.
 func TestProbeCompatOnThisMachine(t *testing.T) {
 	got := probeCompat(context.Background(), false)
-	if got.Backend != backendName {
-		t.Errorf("backend = %q, want %q", got.Backend, backendName)
+	if len(got) != 2 || got[0].Backend != backendName || got[1].Backend != backendHeadscale {
+		t.Fatalf("probe = %+v, want tailscale then headscale", got)
 	}
-	t.Logf("this machine: %s %s (%s)", got.Backend, got.Version, got.Status)
+	for _, r := range got {
+		t.Logf("this machine: %s %s (%s)", r.Backend, r.Version, r.Status)
+	}
 }

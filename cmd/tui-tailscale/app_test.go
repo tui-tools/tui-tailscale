@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/theme"
+	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
@@ -16,7 +17,7 @@ import (
 func newTestApp(t *testing.T) (*app, *tailscale.Fake) {
 	t.Helper()
 	fake := tailscale.NewFake()
-	a := newApp(fake, theme.New(), compat.Result{})
+	a := newApp(fake, headscale.NewFake(), theme.New(), nil)
 	a.width, a.height = 120, 40
 	a.Update(a.load()())
 	return a, fake
@@ -308,7 +309,8 @@ func TestDownThenUp(t *testing.T) {
 // An absent client: the node screen says how to install it, and i previews
 // exactly those commands.
 func TestNotInstalled(t *testing.T) {
-	a := newApp(notInstalled{tailscale.NewFake()}, theme.New(), compat.Result{})
+	a := newApp(notInstalled{tailscale.NewFake()}, headscale.NewFake(), theme.New(),
+		[]compat.Result{})
 	a.width, a.height = 120, 40
 	a.Update(a.load()())
 	view := a.View()
@@ -343,7 +345,7 @@ func TestViewsRenderAtEveryWidth(t *testing.T) {
 	a, _ := newTestApp(t)
 	for _, width := range []int{40, 80, 120} {
 		a.width = width
-		for _, screen := range []string{"1", "2"} {
+		for _, screen := range []string{"1", "2", "3", "4", "5"} {
 			press(t, a, screen)
 			if out := a.View(); out == "" {
 				t.Errorf("empty view at %d columns", width)

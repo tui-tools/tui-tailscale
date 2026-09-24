@@ -12,6 +12,7 @@ import (
 	"github.com/tui-tools/tui-kit/runner"
 	"github.com/tui-tools/tui-kit/theme"
 	"github.com/tui-tools/tui-kit/ui"
+	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
@@ -43,6 +44,29 @@ const (
 	// The one-setting edits.
 	inputRoutes
 	inputHostname
+
+	// The control plane's inputs, on the users, nodes and keys screens.
+	inputCreateUser
+	inputCreatePreAuthKey
+	inputRenameNode
+	// The routes a node is approved to serve.
+	inputApproveRoutes
+	// The server-settings form, in the order the fields are asked for; the
+	// ACME and certificate steps only for the transports that need them.
+	inputServerURL
+	inputListenAddr
+	inputACMEEmail
+	inputTLSCertPath
+	inputTLSKeyPath
+	inputBaseDomain
+	// The OIDC form, in the order the fields are asked for.
+	inputOIDCIssuer
+	inputOIDCClientID
+	inputOIDCSecret
+	inputOIDCDomains
+	inputOIDCGroups
+	inputOIDCUsers
+	inputOIDCScope
 )
 
 // pickerPurpose records what an open picker is choosing.
@@ -53,6 +77,16 @@ const (
 	pickerJoinAcceptRoutes
 	pickerJoinExitNode
 	pickerExitNode
+
+	// The control plane's pickers. The two OIDC switches are pickers rather
+	// than typed words so there is nothing to spell wrong.
+	pickerOIDCOnlyStart
+	pickerOIDCPKCE
+	// The server-settings form's two choices.
+	pickerTransport
+	pickerACMEChallenge
+	// The OIDC form's first step: which identity provider.
+	pickerOIDCProvider
 )
 
 // pickerYes and pickerNo are the two options of a boolean picker; noExitNode
@@ -82,20 +116,28 @@ type joinDraft struct {
 	routes       []string
 }
 
-// app is the Bubble Tea model.
+// app is the Bubble Tea model. It drives both ends of a self-hosted tailnet:
+// this host as a node (backend, internal/tailscale) and the headscale control
+// plane on it (hs, internal/headscale). Each change goes through the backend
+// that owns its binary, so each preview carries that backend's own prefix.
 type app struct {
-	backend       tailscale.Backend
-	theme         theme.Theme
+	backend tailscale.Backend
+	hs      headscale.Backend
+	theme   theme.Theme
+	// backendCompat and hsCompat are the two version probes: the tailscale
+	// client and headscale, each empty when it was not probed (--demo).
 	backendCompat compat.Result
+	hsCompat      compat.Result
 
-	state tailscale.State
+	state   tailscale.State
+	hsState headscale.State
 
 	width, height int
-	screen        tailscale.Screen
+	screen        screen
 	// cursor and offset are per screen, so switching tabs keeps each one's
 	// position.
-	cursor [tailscale.ScreenCount]int
-	offset [tailscale.ScreenCount]int
+	cursor [screenCount]int
+	offset [screenCount]int
 
 	mode          mode
 	confirm       ui.Confirm
@@ -109,6 +151,14 @@ type app struct {
 	join        joinDraft
 	notice      notice
 
+	// cpDraft collects the control-plane forms' answers across their steps.
+	cpDraft controlPlaneDraft
+	// after, when set, runs once on the next successful control-plane
+	// command. It is how the control plane's multi-step flows chain — the
+	// secret, then config.yaml, then the restart — each step its own confirm.
+	// Cancelling a confirm clears it.
+	after func(output string) tea.Cmd
+
 	status     string
 	statusKind ui.StatusKind
 	loading    bool
@@ -116,10 +166,26 @@ type app struct {
 	busy       bool
 }
 
-// loadedMsg carries the result of a read.
+// loadedMsg carries the result of a read: the node and the control plane,
+// read together so the two halves of the screen never disagree about when.
 type loadedMsg struct {
-	state tailscale.State
-	err   error
+	state   tailscale.State
+	hsState headscale.State
+	err     error
+}
+
+// ranMsg carries the result of one confirmed control-plane command.
+type ranMsg struct {
+	cmd    runner.Command
+	output string
+	err    error
+}
+
+// hsPlanRanMsg carries the result of the companion headscale install.
+type hsPlanRanMsg struct {
+	plan   headscale.Plan
+	output string
+	err    error
 }
 
 // planRanMsg carries the result of a confirmed plan.
@@ -132,10 +198,13 @@ type planRanMsg struct {
 	cleanupErr error
 }
 
-// newApp builds the model around a backend.
-func newApp(backend tailscale.Backend, th theme.Theme, backendCompat compat.Result) *app {
-	a := &app{backend: backend, theme: th, backendCompat: backendCompat,
-		width: 80, height: 24, loading: true}
+// newApp builds the model around the two backends and the version probes.
+func newApp(backend tailscale.Backend, hs headscale.Backend, th theme.Theme,
+	probed []compat.Result) *app {
+	a := &app{backend: backend, hs: hs, theme: th,
+		backendCompat: compatFor(probed, backendName),
+		hsCompat:      compatFor(probed, backendHeadscale),
+		width:         80, height: 24, loading: true}
 	if th.Warning != "" {
 		a.setStatus(ui.StatusWarn, th.Warning)
 	}
@@ -145,14 +214,56 @@ func newApp(backend tailscale.Backend, th theme.Theme, backendCompat compat.Resu
 // Init starts the first read.
 func (a *app) Init() tea.Cmd { return a.load() }
 
-// load reads the current state in the background.
+// load reads the current state in the background: the node, then the control
+// plane.
 func (a *app) load() tea.Cmd {
-	backend := a.backend
+	backend, hs := a.backend, a.hs
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		state, err := backend.Load(ctx)
-		return loadedMsg{state: state, err: err}
+		if err != nil {
+			return loadedMsg{err: err}
+		}
+		hsState, err := hs.Load(ctx)
+		return loadedMsg{state: state, hsState: hsState, err: err}
+	}
+}
+
+// run executes one confirmed control-plane command in the background.
+func (a *app) run(cmd runner.Command) tea.Cmd {
+	hs := a.hs
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		out, err := hs.Run(ctx, cmd)
+		return ranMsg{cmd: cmd, output: out, err: err}
+	}
+}
+
+// runHSPlan executes the confirmed headscale install: its steps in order,
+// stopping at the first failure — or at a repository key that is not the
+// pinned one.
+func (a *app) runHSPlan(plan headscale.Plan) tea.Cmd {
+	hs := a.hs
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), planTimeout)
+		defer cancel()
+		var out strings.Builder
+		for i, cmd := range plan.Steps {
+			text, err := hs.Run(ctx, cmd)
+			if text != "" {
+				out.WriteString(text)
+				out.WriteString("\n")
+			}
+			if err == nil {
+				err = plan.CheckStep(i, text)
+			}
+			if err != nil {
+				return hsPlanRanMsg{plan: plan, output: out.String(), err: err}
+			}
+		}
+		return hsPlanRanMsg{plan: plan, output: out.String()}
 	}
 }
 
@@ -216,6 +327,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.loadFailed = false
 		a.state = msg.state
+		a.hsState = msg.hsState
 		a.clampCursor()
 		return a, nil
 
@@ -224,6 +336,25 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		a.planResult(msg)
 		return a, a.load()
+
+	case hsPlanRanMsg:
+		a.busy = false
+		a.loading = true
+		if msg.err != nil {
+			a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
+		} else {
+			a.setStatus(ui.StatusOK, "headscale installed · S configures it and starts the unit")
+		}
+		return a, a.load()
+
+	case ranMsg:
+		return a, a.ranResult(msg)
+
+	case discoveredMsg:
+		return a, a.confirmOIDCChain(msg)
+
+	case tlsCheckedMsg:
+		return a, a.tookTLSCheck(msg)
 
 	case tea.KeyMsg:
 		return a.handleKey(msg)
@@ -289,6 +420,7 @@ func cleanupMessage(err error) string {
 func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		a.join = joinDraft{}
+		a.cpDraft.forgetSecret()
 		return a, tea.Quit
 	}
 	if a.busy {
@@ -318,16 +450,31 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	a.mode = modeBrowse
 	confirmed := a.confirm.Confirmed
-	plan, ok := a.confirm.Payload.(tailscale.Plan)
+	payload := a.confirm.Payload
 	a.confirm = ui.Confirm{}
-	if !confirmed || !ok {
-		// The plan — and a pre-auth key on its stdin — goes with the dialog.
+	if !confirmed || payload == nil {
+		// The plan — and a pre-auth key or a client secret on its stdin —
+		// goes with the dialog. Cancelling also abandons whatever step a
+		// chained control-plane flow would take next.
+		a.after = nil
+		a.cpDraft.forgetSecret()
 		a.setStatus(ui.StatusInfo, "cancelled")
 		return a, nil
 	}
 	a.busy = true
-	a.setStatusf(ui.StatusInfo, "running %s…", plan.Title)
-	return a, a.runPlan(plan)
+	switch p := payload.(type) {
+	case tailscale.Plan:
+		a.setStatusf(ui.StatusInfo, "running %s…", p.Title)
+		return a, a.runPlan(p)
+	case headscale.Plan:
+		a.setStatusf(ui.StatusInfo, "running %s…", p.Title)
+		return a, a.runHSPlan(p)
+	case runner.Command:
+		a.setStatusf(ui.StatusInfo, "running %s…", a.hs.Preview(p))
+		return a, a.run(p)
+	}
+	a.busy = false
+	return a, nil
 }
 
 // handleInput resolves an open text input.
@@ -339,6 +486,7 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	value := strings.TrimSpace(a.input.Value())
 	accepted := a.input.Accepted
 	purpose := a.inputPurpose
+	payload := a.input.Payload
 	a.input = ui.Input{}
 	a.inputPurpose = inputNone
 	a.mode = modeBrowse
@@ -347,6 +495,16 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	switch purpose {
+	case inputCreateUser:
+		return a, a.openConfirm(headscale.BuildCreateUser(value))
+	case inputCreatePreAuthKey:
+		return a, a.openConfirmPreAuthKey(value)
+	case inputRenameNode:
+		id, _ := payload.(string)
+		return a, a.openConfirm(headscale.BuildRenameNode(id, value))
+	case inputApproveRoutes:
+		id, _ := payload.(string)
+		return a, a.confirmApproveRoutes(id, value)
 	case inputJoinServer:
 		a.tookJoinServer(value)
 	case inputJoinKey:
@@ -361,24 +519,33 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case inputHostname:
 		a.openPlan(tailscale.BuildCommand(tailscale.Request{
 			Action: tailscale.ActionHostname, Hostname: value}))
+	default:
+		return a, a.handleControlPlaneInput(purpose, value)
 	}
 	return a, nil
 }
 
 // acceptsEmpty reports whether an empty answer is a real answer rather than a
-// cancel: no pre-auth key (log in with a browser), the OS hostname, no routes.
+// cancel: no pre-auth key (log in with a browser), the OS hostname, no routes
+// — and on the control plane, "no domains" in an allow list, "keep the secret
+// that is already set", no ACME email, no base domain, and an empty routes
+// list, which revokes every approval (previewed as a danger dialog).
 func acceptsEmpty(purpose inputPurpose) bool {
 	switch purpose {
-	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes:
+	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes,
+		inputOIDCDomains, inputOIDCGroups, inputOIDCUsers, inputOIDCSecret,
+		inputACMEEmail, inputBaseDomain, inputApproveRoutes:
 		return true
 	}
 	return false
 }
 
-// cancelled abandons whatever form was open, forgetting a typed key with it.
+// cancelled abandons whatever form was open, forgetting a typed key or client
+// secret with it.
 func (a *app) cancelled() {
 	a.join = joinDraft{}
 	a.exitChoices = nil
+	a.cpDraft.forgetSecret()
 	a.setStatus(ui.StatusInfo, "cancelled")
 }
 
@@ -408,12 +575,26 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.exitChoices = nil
 		a.openPlan(tailscale.BuildCommand(tailscale.Request{
 			Action: tailscale.ActionExitNode, ExitNode: ip}))
+	case pickerOIDCOnlyStart:
+		a.cpDraft.onlyStart = choice == pickerYes
+		return a, a.askOIDCPKCE()
+	case pickerOIDCPKCE:
+		a.cpDraft.pkce = choice == pickerYes
+		return a, a.discoverIssuer()
+	case pickerTransport:
+		return a, a.tookTransport(choice)
+	case pickerACMEChallenge:
+		return a, a.tookChallenge(choice)
+	case pickerOIDCProvider:
+		return a, a.tookOIDCProvider(choice)
 	}
 	return a, nil
 }
 
 // handleBrowseKey handles the tabbed browse view. j and h are actions here —
-// join and hostname — so the selection moves with the arrows.
+// join and hostname — so the selection moves with the arrows. The action keys
+// belong to the screen they are pressed on: the node's on the node and peers
+// screens, the control plane's on the users, nodes and keys screens.
 func (a *app) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
@@ -423,14 +604,14 @@ func (a *app) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.mode = modeHelp
 		return a, nil
 	case "tab", "right":
-		a.setScreen((a.screen + 1) % tailscale.ScreenCount)
+		a.setScreen((a.screen + 1) % screenCount)
 		return a, nil
 	case "shift+tab", "left":
-		a.setScreen((a.screen + tailscale.ScreenCount - 1) % tailscale.ScreenCount)
+		a.setScreen((a.screen + screenCount - 1) % screenCount)
 		return a, nil
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		// A digit jumps to a screen, so a new tab needs no new key binding.
-		if n := tailscale.Screen(key[0] - '1'); n < tailscale.ScreenCount {
+		if n := screen(key[0] - '1'); n < screenCount {
 			a.setScreen(n)
 		}
 		return a, nil
@@ -454,8 +635,16 @@ func (a *app) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.moveCursor(-a.listHeight())
 		return a, nil
 	case "r", "ctrl+r":
+		// On the control plane's nodes screen r is the routes of the selected
+		// node; ctrl+r still reloads there, as everywhere.
+		if key == "r" && a.screen == screenNodes {
+			break
+		}
 		a.loading = true
 		return a, a.load()
+	}
+	if a.screen.controlPlane() {
+		return a, a.handleControlPlaneKey(key)
 	}
 	if spec, ok := tailscale.ActionFor(key); ok {
 		a.startAction(spec.Action)
@@ -651,7 +840,9 @@ func (a *app) openExitNodePicker() {
 
 // --- the join form (j) ------------------------------------------------------
 
-// startJoin opens the first question: the login server.
+// startJoin opens the first question: the login server. When headscale is set
+// up on this very host, its server_url is the answer offered: joining this
+// host to its own control plane is the usual first node.
 func (a *app) startJoin() {
 	a.join = joinDraft{}
 	server := a.state.Prefs.ControlURL
@@ -660,7 +851,22 @@ func (a *app) startJoin() {
 		// question is usually about a self-hosted one.
 		server = ""
 	}
+	if local := a.localServerURL(); local != "" {
+		server = local
+	}
 	a.askJoinServer(server, "")
+}
+
+// localServerURL is the server_url of the headscale on this host, when one
+// is configured for clients: the "this control plane" answer to the join's
+// first question.
+func (a *app) localServerURL() string {
+	cp := a.hsState.ControlPlane
+	if !a.hsState.Present || !headscale.ControlPlaneConfigured(cp) ||
+		tailscale.ServerURLProblem(cp.ServerURL) != "" {
+		return ""
+	}
+	return strings.TrimRight(cp.ServerURL, "/")
 }
 
 // askJoinServer asks for the login server, with the problem of the last
@@ -668,6 +874,14 @@ func (a *app) startJoin() {
 func (a *app) askJoinServer(value, problem string) {
 	help := "Join step 1 of 6 — the control server this node registers with: a Headscale's " +
 		"server_url, or " + tailscale.DefaultControlURL + " for Tailscale's own."
+	if local := a.localServerURL(); local != "" {
+		help += "\n\nThis control plane: headscale on this host serves " + local +
+			", so that is the answer offered."
+		if current := strings.TrimRight(a.state.Prefs.ControlURL, "/"); current != "" &&
+			!strings.EqualFold(current, local) && !tailscale.IsTailscaleControl(current) {
+			help += " The node is joined to " + current + " now."
+		}
+	}
 	if problem != "" {
 		help = "⚠ " + problem + "\n\n" + help
 	}
@@ -763,7 +977,7 @@ func (a *app) confirmJoin(exitNode bool) {
 // --- selection --------------------------------------------------------------
 
 // setScreen switches tabs.
-func (a *app) setScreen(s tailscale.Screen) {
+func (a *app) setScreen(s screen) {
 	a.screen = s
 	a.clampCursor()
 }
@@ -796,8 +1010,15 @@ func (a *app) clampCursor() {
 // rowCount is the number of selectable rows on the current screen. The node
 // screen is a panel, not a list.
 func (a *app) rowCount() int {
-	if a.screen == tailscale.ScreenPeers {
+	switch a.screen {
+	case screenPeers:
 		return len(a.state.Peers)
+	case screenUsers:
+		return len(a.hsState.Users)
+	case screenNodes:
+		return len(a.hsState.Nodes)
+	case screenKeys:
+		return len(a.hsState.PreAuthKeys)
 	}
 	return 0
 }

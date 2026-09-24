@@ -9,8 +9,8 @@ import (
 )
 
 // This file validates the login server URL the join form takes. The rules are
-// tui-vpn's, which validates the same URL from the other side (headscale's
-// server_url), so a URL one tool accepts the other accepts too: an http(s)
+// internal/headscale's, which validates the same URL from the other side
+// (headscale's server_url), so a URL one end accepts the other accepts too: an http(s)
 // URL of safe characters, whose host is an IP literal that parses or a DNS
 // name whose last label is not all digits, and whose port, when it names
 // one, is a port. The character check alone let http://203.0.113.1000

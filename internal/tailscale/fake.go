@@ -12,8 +12,10 @@ import (
 )
 
 // Fake is the in-memory backend behind --demo and the tests: a node joined to
-// a self-hosted control plane at headscale.example.com, with two peers — one
-// offering itself as an exit node, one serving a subnet. It builds and
+// a self-hosted control plane at headscale.example.com (the one
+// internal/headscale's demo serves, where this node is registered under
+// user@example.com), with two peers: one offering itself as an exit node,
+// one serving a subnet. It builds and
 // previews exactly the commands the real backend would, then applies each
 // confirmed one to its own state the way tailscale would, so every key in the
 // demo does something visible and nothing reaches the machine.

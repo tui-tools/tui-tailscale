@@ -70,7 +70,7 @@ nfpms:
     vendor: tui-tools
     homepage: https://tui.tools/tools/tui-tailscale/
     maintainer: tui-tools <maintainers@tui.tools>
-    description: "Self-hosted Tailscale from the terminal: join, route and manage this node"
+    description: "Self-hosted Tailscale from the terminal: the control plane and this node"
     license: MIT
     # The binary belongs in the distribution's own path, not /usr/local: it
     # arrives through the package manager, so the package manager owns it.

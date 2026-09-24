@@ -19,9 +19,11 @@ const (
 	minListHeight = 1
 )
 
-// listHeight is the number of body rows that fit on screen.
+// listHeight is the number of body rows that fit on screen. The lines above a
+// control-plane table (the readiness line, the panel, the notes) are taken off
+// the table rather than pushing the status line off the bottom.
 func (a *app) listHeight() int {
-	return max(a.height-headerLines-chromeLines, minListHeight)
+	return max(a.height-headerLines-chromeLines-len(a.noteLines()), minListHeight)
 }
 
 // View renders the whole screen.
@@ -49,11 +51,13 @@ func (a *app) browseView() string {
 	var body string
 	height := a.listHeight() + 1
 	switch {
+	case a.screen.controlPlane():
+		body = a.cpBody()
 	case a.loading && !a.state.Installed && !a.state.DaemonRunning && a.state.Distro.ID == "":
 		body = ui.EmptyState(a.theme, "reading…", a.width, height)
 	case a.loadFailed:
 		body = ui.EmptyState(a.theme, "could not read — see the message below", a.width, height)
-	case a.screen == tailscale.ScreenNode:
+	case a.screen == screenNode:
 		body = a.panel(a.nodeLines(), height)
 	case len(a.state.Peers) == 0:
 		body = ui.EmptyState(a.theme, a.emptyPeersMessage(), a.width, height)
@@ -62,7 +66,9 @@ func (a *app) browseView() string {
 	}
 	help := ui.HelpBar(a.theme, a.shortHelpKeys(), a.width)
 	status := ui.StatusLine(a.theme, a.statusKind, a.status, a.defaultStatus(), a.width)
-	return strings.Join([]string{a.header(), a.tabsView(), body, help, status}, "\n")
+	bands := []string{a.header(), a.tabsView()}
+	bands = append(bands, a.noteLines()...)
+	return strings.Join(append(bands, body, help, status), "\n")
 }
 
 // panel renders lines of facts into exactly height rows, cut at the width.
@@ -255,21 +261,32 @@ func (a *app) stateStyle(state string) lipgloss.Style {
 	return a.theme.Base
 }
 
-// tabsView renders the screens as one row, the current one accented.
+// tabsView renders the screens as one row, the current one accented. The
+// control plane's screens sit behind a "headscale" mark, so its nodes tab
+// cannot be read as this node's peers.
 func (a *app) tabsView() string {
-	var parts []string
-	for s := tailscale.Screen(0); s < tailscale.ScreenCount; s++ {
-		label := " " + s.Title() + " "
-		if s == tailscale.ScreenPeers && a.state.DaemonRunning {
+	var out strings.Builder
+	for s := screen(0); s < screenCount; s++ {
+		switch {
+		case s == screenUsers:
+			out.WriteString(a.theme.Muted.Render(" ┃ headscale:"))
+		case s > 0:
+			out.WriteString(a.theme.Muted.Render("│"))
+		}
+		label := " " + s.title() + " "
+		switch {
+		case s == screenPeers && a.state.DaemonRunning:
 			label = " peers (" + strconv.Itoa(len(a.state.Peers)) + ") "
+		case s == screenNodes && a.hsState.Present && !a.hsState.NotRunning:
+			label = " nodes (" + strconv.Itoa(len(a.hsState.Nodes)) + ") "
 		}
 		if s == a.screen {
-			parts = append(parts, a.theme.Accent.Render(label))
+			out.WriteString(a.theme.Accent.Render(label))
 			continue
 		}
-		parts = append(parts, a.theme.Muted.Render(label))
+		out.WriteString(a.theme.Muted.Render(label))
 	}
-	return ui.Truncate(strings.Join(parts, a.theme.Muted.Render("│")), a.width)
+	return ui.Truncate(out.String(), a.width)
 }
 
 // header renders the facts at the top of the screen.
@@ -295,17 +312,43 @@ func (a *app) header() string {
 		facts = append(facts, ui.Fact{Label: "peers",
 			Value: strconv.Itoa(online) + "/" + strconv.Itoa(len(s.Peers)) + " online"})
 	}
-	if a.backendCompat.Backend != "" {
-		facts = append(facts, ui.CompatFact(a.theme, a.backendCompat))
-	}
+	facts = append(facts, a.backendFacts()...)
 	return ui.Header{Title: "tui-tailscale", Subtitle: a.backend.Describe(), Facts: facts}.
 		Render(a.theme, a.width)
 }
 
+// backendFacts are the header's two backend badges: the tailscale client and
+// headscale, each with the version the probe read (and whether it is tested),
+// or what stands in for one.
+func (a *app) backendFacts() []ui.Fact {
+	var facts []ui.Fact
+	if a.backendCompat.Backend != "" {
+		fact := ui.CompatFact(a.theme, a.backendCompat)
+		fact.Label = "client"
+		facts = append(facts, fact)
+	}
+	switch {
+	case !a.hsState.Present && (!a.loading || a.hsCompat.Backend != ""):
+		facts = append(facts, ui.Fact{Label: "control", Value: "headscale: not installed"})
+	case a.hsCompat.Backend != "" && a.hsState.Present:
+		fact := ui.CompatFact(a.theme, a.hsCompat)
+		fact.Label = "control"
+		facts = append(facts, fact)
+	case a.hsState.Present:
+		facts = append(facts, ui.Fact{Label: "control",
+			Value: "headscale " + orDash(a.hsState.ControlPlane.ServiceState)})
+	}
+	return facts
+}
+
 // defaultStatus is the hint shown when there is no message to report.
 func (a *app) defaultStatus() string {
-	if a.screen == tailscale.ScreenPeers {
+	switch a.screen {
+	case screenPeers:
 		return strconv.Itoa(len(a.state.Peers)) + " peers  ·  ? for help"
+	case screenUsers, screenNodes, screenKeys:
+		return strconv.Itoa(a.rowCount()) + " rows  ·  every change is previewed and " +
+			"confirmed  ·  ? for help"
 	}
 	return "every change is previewed and confirmed  ·  ? for help"
 }
@@ -449,9 +492,20 @@ func (a *app) noticeView() string {
 	return strings.Repeat("\n", top) + out
 }
 
-// shortHelpKeys is the single-line hint bar, generated from the action table.
+// shortHelpKeys is the single-line hint bar, generated from the action table
+// on the node's screens and tailored to the screen on the control plane's.
 func (a *app) shortHelpKeys() []ui.KeyHint {
 	hints := []ui.KeyHint{{Key: "tab", Desc: "screen"}}
+	if a.screen.controlPlane() {
+		reload := "r"
+		if a.screen == screenNodes {
+			reload = "ctrl+r"
+		}
+		return append(append(hints, a.cpHelpKeys()...),
+			ui.KeyHint{Key: reload, Desc: "reload"},
+			ui.KeyHint{Key: "?", Desc: "help"},
+			ui.KeyHint{Key: "q", Desc: "quit"})
+	}
 	if !a.state.Installed && !a.loading {
 		hints = append(hints, ui.KeyHint{Key: "i", Desc: "install"})
 	} else {
@@ -473,23 +527,29 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 // so a new action cannot be missing from the help.
 func helpKeys() []ui.KeyHint {
 	hints := []ui.KeyHint{
-		{Key: "tab / 1…" + strconv.Itoa(int(tailscale.ScreenCount)), Desc: "switch screen (" + screenNames() + ")"},
+		{Key: "tab / 1…" + strconv.Itoa(int(screenCount)), Desc: "switch screen (" + screenNames() + ")"},
 		{Key: "↑ / ↓", Desc: "move the selection (j and h are actions here)"},
 		{Key: "g / G", Desc: "first / last row"},
-		{Key: "r", Desc: "reload"},
+		{Key: "r / ctrl+r", Desc: "reload (ctrl+r on the control plane's nodes screen)"},
 		{Key: "", Desc: ""},
+		{Key: "node", Desc: "on the node and peers screens:"},
 	}
 	for _, spec := range tailscale.Actions {
 		hints = append(hints, ui.KeyHint{Key: spec.Key, Desc: spec.Help})
 	}
 	return append(hints,
 		ui.KeyHint{Key: "", Desc: ""},
-		ui.KeyHint{Key: "note", Desc: "every change is previewed and confirmed first"},
-		ui.KeyHint{Key: "keys", Desc: "a pre-auth key is typed masked and never put on a"},
-		ui.KeyHint{Key: "", Desc: "command line: it reaches tailscale through a root-only"},
-		ui.KeyHint{Key: "", Desc: "file that is removed after the join"},
-		ui.KeyHint{Key: "login", Desc: "without a key, the join shows a URL to open in a"},
-		ui.KeyHint{Key: "", Desc: "browser: that is how an OIDC login happens"},
+		ui.KeyHint{Key: "headscale", Desc: "on the users, nodes and preauth keys screens:"},
+		ui.KeyHint{Key: "i", Desc: "install headscale from the tui-tools repository (when absent)"},
+		ui.KeyHint{Key: "n", Desc: "create a user (users) / a pre-auth key (preauth keys)"},
+		ui.KeyHint{Key: "S / O", Desc: "server settings / identity provider (users): a diff of"},
+		ui.KeyHint{Key: "", Desc: "config.yaml, then a restart (or an enable)"},
+		ui.KeyHint{Key: "F", Desc: "fix the ownership of headscale's files (users)"},
+		ui.KeyHint{Key: "r", Desc: "approve or revoke a node's advertised routes (nodes)"},
+		ui.KeyHint{Key: "e / m / x", Desc: "expire / rename / delete the selected node (nodes)"},
+		ui.KeyHint{Key: "", Desc: ""},
+		ui.KeyHint{Key: "note", Desc: "every change is previewed and confirmed first; a pre-auth"},
+		ui.KeyHint{Key: "", Desc: "key or client secret is typed masked, never on a command line"},
 		ui.KeyHint{Key: "", Desc: ""},
 		ui.KeyHint{Key: "?", Desc: "this help"},
 		ui.KeyHint{Key: "q", Desc: "quit"},
@@ -498,9 +558,9 @@ func helpKeys() []ui.KeyHint {
 
 // screenNames lists the tabs, for the help screen.
 func screenNames() string {
-	names := make([]string, 0, tailscale.ScreenCount)
-	for s := tailscale.Screen(0); s < tailscale.ScreenCount; s++ {
-		names = append(names, s.Title())
+	names := make([]string, 0, screenCount)
+	for s := screen(0); s < screenCount; s++ {
+		names = append(names, s.title())
 	}
 	return strings.Join(names, ", ")
 }

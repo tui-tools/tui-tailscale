@@ -31,7 +31,7 @@ func TestRunReportDemo(t *testing.T) {
 	for _, want := range []string{
 		"backend: demo\n",
 		"mode: demo (sample data, the system was not read)\n",
-		"demo backend: " + backendName + "\n",
+		"demo backend: " + backendName + " + " + backendHeadscale + "\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report is missing %q:\n%s", want, got)
