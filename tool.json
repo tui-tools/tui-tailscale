@@ -28,6 +28,10 @@
       "caption": "A join previewed: the pre-auth key file, IP forwarding, tailscale up and the key file's removal, in one dialog"
     },
     {
+      "path": "docs/screenshots/tui-tailscale-login.png",
+      "caption": "A join without a key: the login URL on a line of its own, outside the frame, whole, ready to copy"
+    },
+    {
       "path": "docs/screenshots/tui-tailscale-exit.png",
       "caption": "Picking an exit node from the peers that offer one"
     },

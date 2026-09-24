@@ -91,8 +91,10 @@ check "check --demo counts the peer offering an exit node" \
   "$bin --demo --check" \
   '"exitNodeOptions": 1'
 
+# A pending login's URL is the one URL --check prints (loginUrl, a one-time
+# registration link, not an address of the host), so its line is left out.
 check "check --demo carries no URL, name or address" \
-  "$bin --demo --check | grep -cE '://|example|100\\.64\\.|fd7a:' || true" \
+  "$bin --demo --check | grep -v '\"loginUrl\":' | grep -cE '://|example|100\\.64\\.|fd7a:' || true" \
   '^0$'
 
 # --- the check block, on this machine ---------------------------------------
@@ -120,8 +122,8 @@ if command -v tailscale >/dev/null 2>&1; then
       '"daemonRunning": false'
   fi
 
-  check "check carries no URL of this node" \
-    "$bin --check | grep -c '://' || true" \
+  check "check carries no URL of this node beyond a pending login's" \
+    "$bin --check | grep -v '\"loginUrl\":' | grep -c '://' || true" \
     '^0$'
 else
   # No client: the tool must say so, and give this distribution's commands.

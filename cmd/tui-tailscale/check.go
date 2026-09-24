@@ -21,14 +21,20 @@ const checkTimeout = 30 * time.Second
 // carries no address, no name and no URL of this host or its tailnet. The
 // login server is answered as the questions that matter — is one set, is it
 // https, is it Tailscale's own or self-hosted — rather than printed, because
-// the URL names somebody's infrastructure. Addresses are counted, peers are
-// counted, and a pending login URL is reported as pending: it is a one-time
-// credential, not a fact.
+// the URL names somebody's infrastructure. Addresses are counted and peers
+// are counted. The one URL it does print is a pending login's, and only while
+// it is pending: it is a one-time registration link rather than an address of
+// this host, and `--check | jq -r .loginUrl` is the copyable fallback for a
+// terminal too narrow to show it whole.
 type checkReport struct {
 	Tool     string `json:"tool"`
 	Version  string `json:"version"`
 	Backend  string `json:"backend"`
 	Describe string `json:"describe"`
+
+	// LoginURL is a pending login's URL, present only while it is pending
+	// and at the top level, so `--check | jq -r .loginUrl` prints it whole.
+	LoginURL string `json:"loginUrl,omitempty"`
 
 	Tailscale nodeSummary `json:"tailscale"`
 	// Install is how the client would be installed here, present only when it
@@ -51,7 +57,7 @@ type nodeSummary struct {
 	BackendState  string `json:"backendState,omitempty"`
 	ClientVersion string `json:"clientVersion,omitempty"`
 	// LoginPending reports that an interactive login is waiting for a
-	// browser. The URL itself is never printed.
+	// browser; the report's top-level loginUrl carries its URL.
 	LoginPending bool `json:"loginPending"`
 	LoggedIn     bool `json:"loggedIn"`
 	Online       bool `json:"online"`
@@ -122,6 +128,7 @@ func runCheck(ctx context.Context, backend tailscale.Backend,
 		Version:   version,
 		Backend:   backend.Name(),
 		Describe:  backend.Describe(),
+		LoginURL:  state.Node.AuthURL,
 		Tailscale: summariseNode(state),
 		Compat:    compatList(probed),
 	}

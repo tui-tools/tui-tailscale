@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/theme"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
@@ -162,7 +163,7 @@ func TestBrowserJoinShowsTheLoginURL(t *testing.T) {
 		t.Errorf("the join ran %d commands, want 1", len(fake.Commands())-ranBefore)
 	}
 	url := tailscale.DemoLoginServer + tailscale.DemoRegisterPath
-	if a.mode != modeNotice || !strings.Contains(a.notice.body, url) {
+	if a.mode != modeNotice || a.notice.copyable != url {
 		t.Errorf("mode = %v, notice = %q: want the login URL", a.mode, a.notice.body)
 	}
 	if !strings.Contains(a.status, url) {
@@ -352,5 +353,87 @@ func TestViewsRenderAtEveryWidth(t *testing.T) {
 	press(t, a, "?")
 	if !strings.Contains(a.View(), "join a tailnet") {
 		t.Error("the help screen is not generated from the action table")
+	}
+}
+
+// joinedWithoutKey drives the demo to a pending browser login and returns the
+// app with the notice open, and the login URL.
+func joinedWithoutKey(t *testing.T) (*app, string) {
+	t.Helper()
+	a, _ := newTestApp(t)
+	press(t, a, "L")
+	press(t, a, "y")
+	press(t, a, "j")
+	for i := 0; i < 6; i++ {
+		press(t, a, "enter")
+	}
+	press(t, a, "y")
+	if a.mode != modeNotice {
+		t.Fatalf("mode = %v, want the login notice", a.mode)
+	}
+	return a, tailscale.DemoLoginServer + tailscale.DemoRegisterPath
+}
+
+// plainLines renders the view and returns its lines without styling.
+func plainLines(a *app) []string {
+	return strings.Split(ansi.Strip(a.View()), "\n")
+}
+
+// frameRunes are the characters a dialog border is drawn with; a line that
+// carries one of them next to the URL would copy it along.
+const frameRunes = "│─╭╮╰╯┃━"
+
+// The URL of issue #3: it sits on a line of its own, whole, flush left and
+// outside the frame, at 120 and 60 columns. At 40 the demo URL no longer fits:
+// the line is still unframed (the terminal cuts it), and the notice says so
+// and points at --check.
+func TestLoginNoticeKeepsTheURLCopyable(t *testing.T) {
+	for _, width := range []int{120, 60, 40} {
+		a, url := joinedWithoutKey(t)
+		a.width, a.height = width, 30
+		var found string
+		for _, line := range plainLines(a) {
+			if strings.Contains(line, "/register/") {
+				found = line
+			}
+		}
+		if found != url {
+			t.Errorf("%d columns: the URL line is %q, want exactly %q (one line, no "+
+				"indent, no frame)", width, found, url)
+		}
+		if strings.ContainsAny(found, frameRunes) {
+			t.Errorf("%d columns: the URL line carries a frame: %q", width, found)
+		}
+		// Read the prose the way a person does: without the frame.
+		prose := strings.Map(func(r rune) rune {
+			if strings.ContainsRune(frameRunes, r) {
+				return ' '
+			}
+			return r
+		}, ansi.Strip(a.View()))
+		view := strings.Join(strings.Fields(prose), " ")
+		cut := strings.Contains(view, "narrower than the URL")
+		if fits := len(url) <= width; cut == fits {
+			t.Errorf("%d columns (URL %d): the notice says cut = %v", width, len(url), cut)
+		}
+	}
+}
+
+// The status line and the node screen carry the URL alone on their line too.
+func TestPendingLoginURLOnTheStatusLineAndNodeScreen(t *testing.T) {
+	a, url := joinedWithoutKey(t)
+	if a.status != url {
+		t.Errorf("status = %q, want the URL alone", a.status)
+	}
+	press(t, a, "x") // close the notice
+	a.width = 120
+	found := false
+	for _, line := range plainLines(a) {
+		if line == url {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the node screen should show the URL on a line of its own")
 	}
 }

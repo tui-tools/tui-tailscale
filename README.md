@@ -45,7 +45,9 @@ The login server is validated the way tui-vpn validates headscale's `server_url`
 
 **With a pre-auth key**, the key is typed masked and never put on a command line. It travels on the standard input of `install`, which writes it mode 600 to `/run/tui-tailscale.authkey` (root-owned, on a tmpfs); tailscale reads it from there through `--authkey=file:…`; and `rm -f` removes the file after the join, whether the join worked or not. The key appears in no argv, no preview and no status line.
 
-**Without a key**, tailscale prints a login URL. tui-tailscale takes it from the command's output and shows it in a dialog and in the status line: open it in a browser, on any machine, and log in. With a self-hosted Headscale that is your identity provider's OIDC login. The node joins as soon as the login completes, and the URL stays on the node screen until then.
+**Without a key**, tailscale prints a login URL. tui-tailscale takes it from the command's output and shows it in a dialog and alone on the status line: open it in a browser, on any machine, and log in. With a self-hosted Headscale that is your identity provider's OIDC login. The node joins as soon as the login completes, and the URL stays on the node screen until then. Wherever it is shown, the URL sits on a line of its own, flush left, never wrapped and never inside a frame, so a terminal selection copies the URL and nothing else. On a terminal narrower than the URL the line is cut at the edge; `tui-tailscale --check | jq -r .loginUrl` prints it whole.
+
+![The login URL, outside the frame](docs/screenshots/tui-tailscale-login.png)
 
 When the join advertises routes or an exit node, the same preview turns IP forwarding on, persistently: `install` writes `/etc/sysctl.d/99-tailscale.conf` and `sysctl -w` applies it now. tailscale warns about missing forwarding but does not set it.
 
@@ -93,7 +95,7 @@ Reading the node — `tailscale status --json` and `tailscale debug prefs` — r
 tui-tailscale --check
 ```
 
-reads the node once and prints JSON for scripts: installed or not, whether tailscaled answers and why not, the backend state, whether a login is pending, the login server answered as `set` / `https` / `tailscaleControl` rather than printed, whether the node has an IPv4 and an IPv6 tailnet address, the settings as booleans and counts, the peers counted (total, online, offering an exit node, serving routes), and the `compat` block. When tailscale is absent it adds an `install` block with the distribution and the commands `i` would run. It prints no address, name or URL of the node or its tailnet: a pending login URL is reported as pending, because it is a one-time credential.
+reads the node once and prints JSON for scripts: installed or not, whether tailscaled answers and why not, the backend state, whether a login is pending, the login server answered as `set` / `https` / `tailscaleControl` rather than printed, whether the node has an IPv4 and an IPv6 tailnet address, the settings as booleans and counts, the peers counted (total, online, offering an exit node, serving routes), and the `compat` block. When tailscale is absent it adds an `install` block with the distribution and the commands `i` would run. It prints no address, name or URL of the node or its tailnet. The one exception is a pending login: while one waits for a browser, the top-level `loginUrl` carries its URL, a one-time registration link, so `tui-tailscale --check | jq -r .loginUrl` is a copyable fallback.
 
 ## Usage
 

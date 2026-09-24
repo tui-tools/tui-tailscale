@@ -76,3 +76,35 @@ func TestRunCheckNotInstalled(t *testing.T) {
 		t.Error("compat must be a list, empty when nothing was probed")
 	}
 }
+
+// A pending login's URL is the one URL --check prints, at the top level, so
+// `--check | jq -r .loginUrl` is a copyable fallback.
+func TestRunCheckPendingLogin(t *testing.T) {
+	fake := tailscale.NewFake()
+	ctx := context.Background()
+	for _, req := range []tailscale.Request{{Action: tailscale.ActionLogout},
+		{Action: tailscale.ActionJoin, LoginServer: tailscale.DemoLoginServer}} {
+		plan, err := tailscale.BuildCommand(req)
+		if err != nil {
+			t.Fatalf("BuildCommand: %v", err)
+		}
+		for _, cmd := range plan.Steps {
+			_, _ = fake.Run(ctx, cmd)
+		}
+	}
+	var out strings.Builder
+	if err := runCheck(ctx, fake, compat.Result{}, &out); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatalf("the output is not JSON: %v", err)
+	}
+	want := tailscale.DemoLoginServer + tailscale.DemoRegisterPath
+	if report["loginUrl"] != want {
+		t.Errorf("loginUrl = %v, want %q", report["loginUrl"], want)
+	}
+	if !strings.Contains(out.String(), `"loginPending": true`) {
+		t.Error("loginPending should be true")
+	}
+}

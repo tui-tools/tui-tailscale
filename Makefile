@@ -68,6 +68,7 @@ screenshots: build
 		--budget 12 --rows 32 --window 1000,660 \
 		--screen node= --screen peers=2 \
 		--screen 'join=j\r0123456789abcdef\r\r\r192.0.2.0/24\r\r' \
+		--screen 'login=Lyj\r\r\r\r\r\ry' \
 		--screen exit=x --screen help=?
 
 ## readme: regenerate the generated README sections from tool.json.

@@ -108,10 +108,11 @@ func (a *app) nodeLines() []string {
 	n, p := s.Node, s.Prefs
 	lines := []string{"", a.fact("state", stateLine(n), a.stateStyle(n.BackendState))}
 	if n.AuthURL != "" {
+		// The URL gets a line of its own, flush left and unstyled, so a
+		// terminal selection copies the URL and nothing else.
 		lines = append(lines,
-			a.fact("login pending", n.AuthURL, t.Warn),
-			"  "+t.Muted.Render(strings.Repeat(" ", 18)+
-				"open it in a browser to finish the login; r re-reads"))
+			a.fact("login pending", "open the URL below in a browser; r re-reads", t.Warn),
+			n.AuthURL)
 	}
 	server := p.ControlURL
 	kind := "self-hosted"
@@ -398,23 +399,54 @@ func (a *app) peerStyle(p tailscale.Peer) *lipgloss.Style {
 	return &s
 }
 
-// noticeView renders the notice dialog: a title, a body, and the one key that
-// closes it.
+// noticeView renders the notice dialog: a framed title and body, then the
+// value to copy on a line of its own — flush left, unframed, unwrapped — and
+// the one key that closes it.
+//
+// The frame is what breaks a copy: selecting a URL that wraps inside a box
+// picks up the border and the indentation with it. So the box is widened, up
+// to the terminal, to line up with the value, but the value itself is never
+// inside it. When the terminal is narrower than the value, Bubble Tea cuts the
+// line at the edge; the body then says so and points at --check, which prints
+// it whole.
 func (a *app) noticeView() string {
 	t := a.theme
+	n := a.notice
+	frame := t.Dialog.GetHorizontalFrameSize()
+	value := len(n.copyable)
+	fits := value > 0 && value <= a.width
+
 	inner := min(max(a.width-8, 24), 78)
-	content := max(inner-t.Dialog.GetHorizontalFrameSize(), 20)
+	if fits {
+		inner = min(max(inner, value), a.width)
+	}
+	content := max(inner-frame, 20)
+
+	body := n.body
+	if value > 0 && !fits {
+		body += "\n\nThis terminal is narrower than the URL, so the line below is cut: " +
+			"widen the window, or use --check as above."
+	}
 	lines := []string{}
-	for _, l := range ui.Wrap(a.notice.title, content) {
+	for _, l := range ui.Wrap(n.title, content) {
 		lines = append(lines, t.Title.Render(l))
 	}
 	lines = append(lines, "")
-	for _, l := range ui.WrapBody(a.notice.body, content) {
+	for _, l := range ui.WrapBody(body, content) {
 		lines = append(lines, t.Base.Render(l))
 	}
-	lines = append(lines, "", t.Key.Render("any key")+" "+t.KeyDesc.Render("close"))
-	return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center,
-		t.Dialog.Width(inner).Render(strings.Join(lines, "\n")))
+	box := t.Dialog.Width(inner).Render(strings.Join(lines, "\n"))
+
+	block := []string{lipgloss.PlaceHorizontal(a.width, lipgloss.Center, box)}
+	if value > 0 {
+		// Plain text: no style that could pad it, no indent, no frame.
+		block = append(block, "", n.copyable)
+	}
+	block = append(block, "", lipgloss.PlaceHorizontal(a.width, lipgloss.Center,
+		t.Key.Render("any key")+" "+t.KeyDesc.Render("close")))
+	out := strings.Join(block, "\n")
+	top := max((a.height-lipgloss.Height(out))/2, 0)
+	return strings.Repeat("\n", top) + out
 }
 
 // shortHelpKeys is the single-line hint bar, generated from the action table.

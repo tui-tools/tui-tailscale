@@ -107,7 +107,7 @@ type app struct {
 	// for.
 	exitChoices map[string]string
 	join        joinDraft
-	notice      struct{ title, body string }
+	notice      notice
 
 	status     string
 	statusKind ui.StatusKind
@@ -248,13 +248,17 @@ func (a *app) planResult(msg planRanMsg) {
 			// The client stopped waiting (--timeout), which it reports as a
 			// failure; the login itself is pending in tailscaled, and this URL
 			// is how it finishes.
-			a.setStatusf(ui.StatusWarn, "login pending — open %s in a browser", url)
+			//
+			// The status line carries the URL alone, so nothing but the URL is
+			// there to select; the notice prints it outside its frame.
+			a.setStatus(ui.StatusWarn, url)
 			a.openNotice("Log in to finish joining",
-				"tailscale is waiting for a login. Open this URL in a browser — on any "+
-					"machine — and log in (with a self-hosted control plane, this is the "+
-					"OIDC login of your identity provider):\n\n  "+url+"\n\nThe node "+
-					"joins as soon as the login completes; r re-reads it. The URL also "+
-					"stays on the node screen until then.")
+				"tailscale is waiting for a login. Open the URL below in a browser — on "+
+					"any machine — and log in (with a self-hosted control plane, this is "+
+					"the OIDC login of your identity provider). The node joins as soon as "+
+					"the login completes; r re-reads it. The URL also stays on the node "+
+					"screen and the status line until then, and `"+toolName+
+					" --check | jq -r .loginUrl` prints it too.", url)
 			if msg.cleanupErr != nil {
 				a.setStatus(ui.StatusError, cleanupMessage(msg.cleanupErr))
 			}
@@ -602,9 +606,19 @@ func (a *app) openPicker(purpose pickerPurpose, title string, current bool) {
 	a.mode = modePicker
 }
 
+// notice is a message the user only has to read, with at most one value to
+// copy out of it.
+type notice struct {
+	title, body string
+	// copyable is printed on a line of its own, outside the frame and never
+	// wrapped: a terminal selection across a frame picks up the border
+	// characters, and a wrapped URL is two half URLs.
+	copyable string
+}
+
 // openNotice opens a message the user only has to read.
-func (a *app) openNotice(title, body string) {
-	a.notice.title, a.notice.body = title, body
+func (a *app) openNotice(title, body, copyable string) {
+	a.notice = notice{title: title, body: body, copyable: copyable}
 	a.mode = modeNotice
 }
 
