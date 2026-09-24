@@ -261,7 +261,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `tailscale` |
 | Version read with | `tailscale version` |
 | Minimum | 1.60.0 |
-| Tested | `1.98.4` |
+| Tested | `1.98.4`, `1.102.4` |
 
 The tested versions are generated from `compat/results.jsonl`, which the tool's
 own smoke test appends to when it runs against a real machine in
