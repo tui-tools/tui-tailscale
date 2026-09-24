@@ -1,1 +1,4 @@
 {"backend": "tailscale", "date": "2026-09-24", "distro": "fedora-42", "result": "pass", "suite": "smoke", "tool": "tui-tailscale", "version": "1.98.4"}
+{"backend": "tailscale", "date": "2026-09-24", "distro": "fedora-44", "result": "pass", "suite": "smoke", "tool": "tui-tailscale", "version": "1.102.4"}
+{"backend": "tailscale", "date": "2026-09-24", "distro": "omarchy-server-4.0.1", "result": "pass", "suite": "smoke", "tool": "tui-tailscale", "version": "1.102.4"}
+{"backend": "tailscale", "date": "2026-09-24", "distro": "ubuntu-24.04", "result": "pass", "suite": "smoke", "tool": "tui-tailscale", "version": "1.102.4"}
