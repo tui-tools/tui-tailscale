@@ -1,34 +1,117 @@
 <img src="assets/logo.png" alt="tui-tools" width="240">
 
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-template/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-template)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14368/badge)](https://www.bestpractices.dev/projects/14368)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-tailscale/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-tailscale)
 
-> **Beta.** The family is days old and still changing. Package names, flags and keys may move without notice until 1.0. Pin versions, and report what breaks.
+> **Beta, and unreleased.** This tool is private until its first release is validated in the lab. Flags and keys may move without notice.
 
-# tui-template
+# tui-tailscale
 
-The starting point for a new [tui-tools](https://github.com/tui-tools) tool.
-Press **Use this template**, rename it, replace one package, and you have a tool
-that looks and behaves like the rest of the family.
+Self-hosted Tailscale from the terminal, both ends of it: this machine as a node of a tailnet today, the [Headscale](https://headscale.net) control plane next.
 
-It is not a pile of TODOs: it is a working tool. It lists the files in a
-directory and can update a file's timestamp, which is deliberately trivial —
-what matters is the shape around it, and that shape is already correct.
+tui-tailscale drives the `tailscale` client, whichever control plane it answers to — a self-hosted Headscale or Tailscale's own. It shows the node — its state, the login server, its name and tailnet addresses, and the settings that decide what it routes — and the peers it sees, and it joins a tailnet, changes those settings, disconnects and logs out.
 
-![The list](docs/screenshots/tui-template-main.png)
+It manages as well as reads. Every change is shown as the exact command line first and applied only after you confirm it. There is one place a process is ever started, `internal/tailscale`, so the command the dialog showed is the command that runs.
 
-![The confirm dialog](docs/screenshots/tui-template-touch.png)
+![The node screen](docs/screenshots/tui-tailscale-node.png)
+
+## Try it with nothing installed
 
 ```sh
-make demo     # try it before changing anything
+tui-tailscale --demo
 ```
 
-## Install
+`--demo` runs every screen against a fake node joined to `https://headscale.example.com`, with two peers: `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
 
-The section below is **generated from `tool.json`** by
-`tui-kit/tools/render-install.py`, so the README and the family website never
-disagree about how a tool is installed. Run `make readme` after editing the
-manifest, and again after a release, since the download line names the version.
+## Screens
+
+`tab` (or `1`, `2`) switches between them. `j` and `h` are actions here, so the selection moves with the arrow keys.
+
+- **node** — the backend state (running, stopped, logged out, waiting for approval), the login server and whether it is self-hosted, the owner, the hostname and MagicDNS name, the tailnet addresses, and the settings: accept routes, advertised routes, the exit node in use, whether this node offers itself as one, accept DNS, the client version and its health warnings. A login waiting for a browser shows its URL here until it completes. When tailscale is not installed, or tailscaled is not running, or refuses this user, the screen says so and what to do.
+- **peers** — the rest of the tailnet: name, owner, tailnet address, online (or when last seen), OS, whether the peer offers an exit node or is the one in use, and the subnets it serves (its primary routes and any allowed prefix beyond its own addresses).
+
+![The peers screen](docs/screenshots/tui-tailscale-peers.png)
+
+## Manage, not view
+
+### Join a tailnet (`j`)
+
+Six questions — login server, an optional pre-auth key, hostname, accept routes, subnets to advertise, offer an exit node — and one dialog that previews the whole join:
+
+![A join previewed](docs/screenshots/tui-tailscale-join.png)
+
+The command is `tailscale up --login-server=<url> … --reset`. `--reset` returns every setting not on the line to its default, so tailscale never refuses the change with its "mention all non-default flags" error; the dialog says so. `--timeout=20s` stops the command from blocking the UI while it waits; the join itself goes on in tailscaled. A node already logged in to a different server gets `--force-reauth`, which tailscale requires to change servers.
+
+The login server is validated the way tui-vpn validates headscale's `server_url` from the other side: an http(s) URL whose host is an address that parses or a DNS name, with no user info and a real port.
+
+**With a pre-auth key**, the key is typed masked and never put on a command line. It travels on the standard input of `install`, which writes it mode 600 to `/run/tui-tailscale.authkey` (root-owned, on a tmpfs); tailscale reads it from there through `--authkey=file:…`; and `rm -f` removes the file after the join, whether the join worked or not. The key appears in no argv, no preview and no status line.
+
+**Without a key**, tailscale prints a login URL. tui-tailscale takes it from the command's output and shows it in a dialog and alone on the status line: open it in a browser, on any machine, and log in. With a self-hosted Headscale that is your identity provider's OIDC login. The node joins as soon as the login completes, and the URL stays on the node screen until then. Wherever it is shown, the URL sits on a line of its own, flush left, never wrapped and never inside a frame, so a terminal selection copies the URL and nothing else. On a terminal narrower than the URL the line is cut at the edge; `tui-tailscale --check | jq -r .loginUrl` prints it whole.
+
+![The login URL, outside the frame](docs/screenshots/tui-tailscale-login.png)
+
+When the join advertises routes or an exit node, the same preview turns IP forwarding on, persistently: `install` writes `/etc/sysctl.d/99-tailscale.conf` and `sysctl -w` applies it now. tailscale warns about missing forwarding but does not set it.
+
+### One setting at a time
+
+Each of these is one `tailscale set --<flag>=<value>`, which changes that setting and leaves every other one alone:
+
+| Key | What | Command |
+| --- | --- | --- |
+| `a` | toggle accepting the routes other nodes advertise | `tailscale set --accept-routes=true\|false` |
+| `A` | edit the subnets this node advertises (empty clears them) | `tailscale set --advertise-routes=<cidrs>` |
+| `x` | pick the exit node to use, from the peers that offer one, or none | `tailscale set --exit-node=<ip>` |
+| `E` | toggle offering this node as an exit node | `tailscale set --advertise-exit-node=true\|false` |
+| `h` | set the hostname | `tailscale set --hostname=<name>` |
+
+Routes are validated before they reach an argv: a prefix with host bits set (`192.168.1.1/24`) is refused with the prefix it probably meant, and a default route is pointed at `E` instead. Advertising routes or an exit node adds the same forwarding steps as the join. Advertised routes still have to be approved on the control plane (on Headscale, `headscale nodes approve-routes`, or `r` on tui-vpn's nodes screen).
+
+![Picking an exit node](docs/screenshots/tui-tailscale-exit.png)
+
+### Down, up, logout (`d`, `u`, `L`)
+
+`d` is `tailscale down`: the node goes offline and keeps its login. `u` is a plain `tailscale up`, which brings it back with the settings it had. `L` is `tailscale logout`. `d` and `L` open in the danger colour, because if you are connected to this machine over the tailnet they end that session.
+
+### Install tailscale (`i`)
+
+When `tailscale` is absent, the node screen says how to install it on this distribution (read from `/etc/os-release`), and `i` previews and runs exactly those commands — Tailscale's documented package-manager steps, never its `curl | sh` script:
+
+- **Ubuntu and Debian**: Tailscale's signing key and apt source list for the release's codename, fetched from pkgs.tailscale.com into `/usr/share/keyrings` and `/etc/apt/sources.list.d`, then `apt-get update` and `apt-get install -y tailscale`.
+- **Fedora** (and the RHEL rebuilds): Tailscale's `.repo` file fetched into `/etc/yum.repos.d` — the file `dnf config-manager --add-repo` would add, written in the way that works with both dnf4 and dnf5 — then `dnf install -y tailscale`.
+- **Arch and Omarchy**: `pacman -S --needed --noconfirm tailscale`.
+
+Each ends with `systemctl enable --now tailscaled`. Anything else is pointed at https://tailscale.com/download/linux.
+
+## Privileges
+
+Reading the node — `tailscale status --json` and `tailscale debug prefs` — runs as you: tailscaled lets a local user read its status. Only when the socket refuses you is the same read retried through the escalation prefix (`sudo -n` by default, `--sudo ""` to disable it). Every change escalates, previewed first. A user set with `tailscale set --operator=$USER` can run the tool with `--sudo ""`.
+
+## `--report`, for bug reports
+
+`--report` prints the block the bug form asks for: the tool and kit versions, the client's version, whether tailscaled answers and the state it reports, the distribution, the kernel and the terminal. It reads nothing privileged, and it carries no login server, address, node name or tailnet name.
+
+## `--check`, one read as JSON
+
+```sh
+tui-tailscale --check
+```
+
+reads the node once and prints JSON for scripts: installed or not, whether tailscaled answers and why not, the backend state, whether a login is pending, the login server answered as `set` / `https` / `tailscaleControl` rather than printed, whether the node has an IPv4 and an IPv6 tailnet address, the settings as booleans and counts, the peers counted (total, online, offering an exit node, serving routes), and the `compat` block. When tailscale is absent it adds an `install` block with the distribution and the commands `i` would run. It prints no address, name or URL of the node or its tailnet. The one exception is a pending login: while one waits for a browser, the top-level `loginUrl` carries its URL, a one-time registration link, so `tui-tailscale --check | jq -r .loginUrl` is a copyable fallback.
+
+## Usage
+
+```sh
+tui-tailscale                 # this machine's node
+tui-tailscale --demo          # sample tailnet, nothing is touched
+tui-tailscale --check         # one read, as JSON
+tui-tailscale --report        # what a bug report needs, then exit
+tui-tailscale --sudo ""       # no escalation (root, or the operator user)
+tui-tailscale --theme ~/mytheme/colors.toml
+tui-tailscale --version
+```
+
+Configuration is read from `/etc/tui-tailscale/config.toml`, then `~/.config/tui-tailscale/config.toml`, then `TUI_TAILSCALE_*` in the environment; see [`examples/config.toml`](examples/config.toml).
+
+## Install
 
 <!-- install:start -->
 <!-- Generated by tui-kit/tools/render-install.py from tool.json. -->
@@ -37,11 +120,9 @@ manifest, and again after a release, since the download line names the version.
 ### From source
 
 ```sh
-git clone https://github.com/tui-tools/tui-template
-cd tui-template && make demo
+git clone https://github.com/tui-tools/tui-tailscale
+cd tui-tailscale && make demo
 ```
-
-Or press "Use this template" on GitHub, which is the point of it.
 
 Not packaged for these yet; the static binary works everywhere in the meantime.
 
@@ -74,11 +155,10 @@ sudo pacman -Sy
 Then, and for every other tool in the family:
 
 ```sh
-sudo pacman -S tui-template
+sudo pacman -S tui-tailscale
 ```
 
-The template is never packaged. Your tool's channel turns available once its
-first release lands in pkgs.tui.tools.
+Available once the first release lands in pkgs.tui.tools.
 
 ### Debian and Ubuntu — coming soon
 
@@ -108,11 +188,10 @@ sudo apt update
 Then, and for every other tool in the family:
 
 ```sh
-sudo apt install tui-template
+sudo apt install tui-tailscale
 ```
 
-The template is never packaged. Your tool's channel turns available once its
-first release lands in pkgs.tui.tools.
+Available once the first release lands in pkgs.tui.tools.
 
 ### Fedora and RHEL — coming soon
 
@@ -139,215 +218,31 @@ sudo dnf makecache
 Then, and for every other tool in the family:
 
 ```sh
-sudo dnf install tui-template
+sudo dnf install tui-tailscale
 ```
 
-The template is never packaged. Your tool's channel turns available once its
-first release lands in pkgs.tui.tools.
+Available once the first release lands in pkgs.tui.tools.
 
 ### Any distribution, static binary — coming soon
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-template/releases/download/v{version}/tui-template_{version}_linux_amd64.tar.gz | tar -xz tui-template
-sudo install -m0755 tui-template /usr/local/bin/tui-template
+curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v{version}/tui-tailscale_{version}_linux_amd64.tar.gz | tar -xz tui-tailscale
+sudo install -m0755 tui-tailscale /usr/local/bin/tui-tailscale
 ```
 
-The template is never released. Your tool is, once you tag v0.1.0.
+Available once v0.1.0 is tagged.
 
 ### Verify a download
 
-Every release of `tui-template` ships a `checksums.txt`. Check an archive
+Every release of `tui-tailscale` ships a `checksums.txt`. Check an archive
 against it before installing:
 
 ```sh
 sha256sum -c checksums.txt --ignore-missing
 ```
 
-Website: https://tui.tools/tools/tui-template/
+Website: https://tui.tools/tools/tui-tailscale/
 <!-- install:end -->
-
-## Usage
-
-```sh
-tui-template                       # list the working directory
-tui-template --demo                # sample data, nothing is touched
-tui-template --dir /var/log        # list somewhere else
-tui-template --report              # print what a bug report needs, exit
-tui-template --theme ~/mytheme/colors.toml
-tui-template --version
-```
-
-### `--report`, for bug reports
-
-`--report` prints, in one block, everything a maintainer has to ask for
-otherwise: the tool and kit versions, the backend and the version probed off
-it, the distribution, the kernel, the terminal, the theme, the escalation
-prefix, and whether the running binary came from a package. It needs no
-privileges and touches nothing, so it works on the machine where the bug is —
-including one where no backend can be built at all, which is itself a thing
-worth reporting.
-
-```console
-$ tui-template --report
-tui-template 0.1.0 (kit v0.2.9)
-backend: coreutils 9.6
-mode: live
-distro: fedora 42 (Fedora Linux 42 (Workstation Edition))
-kernel: 6.19.14-108.fc42.x86_64
-arch: x86_64
-locale: en_US.UTF-8
-term: xterm-256color
-theme: tokyo-night
-sudo: sudo -n
-root: no
-binary: /usr/bin/tui-template (packaged)
-```
-
-The block is written to be published as it is: it carries no hostname, user
-name, home path or address, and no environment variable beyond `LANG`,
-`LC_ALL`, `TERM` and `TERM_PROGRAM`. A binary living under your home directory
-is reported as being there without naming the path. `--report` works with
-`--demo` too, where it says so on the `mode` line and names the backend the
-fake imitates.
-
-Everything above the tool-specific lines comes from the kit, so the whole
-family answers `--report` in the same shape. In your tool, `report.go` is where
-you add what only it knows — the backend it selected, what it saw of the ones
-it did not — and where you make sure none of it names the user: the kit scrubs
-what it collected itself, and a value you pass through `report.Extra` is yours
-to scrub. `scrubHome` in that file is the template's example, over the one
-place a path can reach the block here.
-
-The bug form asks for this block first — see
-[`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml),
-which is rendered from the kit's template and needs no editing beyond the
-rename.
-
-## What you get
-
-| From the kit | What it gives you |
-| --- | --- |
-| `theme` | Tokyo Night, Omarchy theme detection, `NO_COLOR` |
-| `ui` | Header, table, help bar, help screen, status line, dialogs |
-| `config` | `/etc/<tool>/…` + `~/.config/<tool>/…` + environment + flags |
-| `runner` | Preview → confirm → run, escalation, timeouts, and a fake |
-| `report` | The `--report` block a bug report pastes, in the family's shape |
-
-| In this repository | What it is |
-| --- | --- |
-| `cmd/tui-template/main.go` | Flags, configuration, backend selection, program start |
-| `cmd/tui-template/app.go` | The Bubble Tea model: one flat update loop |
-| `cmd/tui-template/view.go` | The four bands every screen draws |
-| `cmd/tui-template/report.go` | `--report`: the block a bug report pastes |
-| `internal/tool/tool.go` | Your model, your action table, your backend interface |
-| `internal/tool/real.go` | The backend that touches the machine |
-| `internal/tool/fake.go` | The in-memory backend behind `--demo` and the tests |
-| `internal/tool/tool_test.go` | The two assertions that matter |
-| `tool.json` | The manifest the family website reads: tagline, category, keys, install, security |
-| `.github/workflows/ci.yml` | gofmt, vet, race tests, cross-build, tool.json validation, release on a tag |
-| `.github/workflows/codeql.yml` | The static analysis pass, on every push and weekly |
-| `internal/tool/fuzz_test.go` | The fuzz target every parser package carries |
-| `test/smoke.sh` | The assertions the lab runs against a real machine |
-| `.goreleaser.yaml` | Static linux/amd64 and linux/arm64 archives |
-| `Makefile` | `check`, `build`, `demo`, `screenshots` |
-
-## Checklist for a new tool
-
-**1. Pick the name.** Every tool is `tui-<target>`: the repository, the Go
-module, the package directory, the binary and the config directory all carry
-that one name, with **no aliases**. `tui-firewall`, `tui-systemd`. Use
-`tui-<name>-<solution>` only when a target genuinely needs disambiguating.
-
-**2. Rename everything at once.**
-
-```sh
-NEW=tui-yourtool
-git mv cmd/tui-template "cmd/$NEW"
-grep -rl tui-template --include='*.go' --include='*.md' --include='*.yaml' \
-  --include='*.yml' --include='*.toml' . Makefile |
-  xargs sed -i "s/tui-template/$NEW/g"
-go mod edit -module "github.com/tui-tools/$NEW"
-go mod tidy && make check
-```
-
-**3. Replace `internal/tool`.** Rename the package to your subject
-(`internal/systemd`, `internal/containers`). Then, in order:
-
-- **the model** — the struct one row of your list holds, and the sort that puts
-  what matters on top;
-- **the action table** — one `ActionSpec` per key. The key map, the help screen
-  and the confirm dialog are all generated from it, so they cannot drift apart;
-- **`BuildCommand`** — intent to argv. Nothing else in the tool may build a
-  command line;
-- **`Real`** — one `runner.New` per binary you drive, and the reads;
-- **`Fake`** — the sample data `--demo` shows, and a `Hook` that applies a
-  confirmed command to it the way the real one would.
-
-**4. Adjust the view.** Columns in `view.go`, the header facts, and the widths
-at which columns are dropped. Check it at 40 columns as well as 120.
-
-**5. Fill in `tool.json`.** It is the manifest the family website reads, and
-the copy in this repository is a valid example rather than a set of TODOs.
-Replace the tagline (80 characters at most), the description, the category, the
-keys worth advertising, the install commands and — most carefully — the
-`security` block, which the site renders as a checklist a reader trusts. Drop
-`"unreleased": true` once you have tagged. The fields are documented in
-[tui-kit/docs/tool-manifest.md](https://github.com/tui-tools/tui-kit/blob/main/docs/tool-manifest.md),
-and `make manifest` validates yours against the schema — CI runs the same check,
-so a manifest that drifts fails the build.
-
-The `install` channels stay `"available": false` in the template, and they
-should stay false in your tool until it has actually shipped. A channel is a
-promise: `available: true` renders the command as one a reader can run today,
-and the family website lists the tool as installable from that package manager.
-Tag `v0.1.0`, let the release build the `.deb`, the `.rpm` and the pacman
-package, and wait for the next `pkgs.tui.tools` publish to pick them up — then
-flip `pacman`, `apt` and `dnf` to `true` and run `make readme`. `zypper` and
-`aur` stay false across the family; nothing publishes to them yet.
-
-**6. Declare the backend you drive.** The `backends[]` block of `tool.json`
-names the binary, how to read its version, the oldest version you support, the
-features that appeared in a known release and the caveats that apply to a
-range. `cmd/<tool>/compat.go` probes it once at startup and the header shows
-what it found, so a user on an unusual version learns it from the tool rather
-than from an empty screen. Ask `caps.Has("your-feature")` where a view needs a
-recent backend; never write a version comparison into the code. `tested` is
-generated from `compat/results.jsonl` by `make compat` after a run in
-[tui-lab](https://github.com/tui-tools/tui-lab) — see
-[tui-kit/docs/compatibility.md](https://github.com/tui-tools/tui-kit/blob/main/docs/compatibility.md).
-A tool that drives nothing external drops the block, `compat.go` and the header
-fact together.
-
-**7. Re-render the screenshots.** `make screenshots` runs the real binary in
-`--demo` under a pseudo-terminal, so the README frames are the actual UI:
-
-```make
-screenshots: build
-	python3 $(KIT)/tools/render-screenshots.py \
-		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
-		--screen main= --screen touch=t --screen help=?
-```
-
-Each `--screen` is `name=keys`; the keys are typed once the UI has drawn.
-
-**8. Set the repository up.** Description, topics (`tui`, `terminal`,
-`bubbletea`, `go`, `golang`, `omarchy`, plus yours), issues on, wiki and
-projects off, delete-branch-on-merge on. Then add the tool to the family list in
-[tui-tools/.github](https://github.com/tui-tools/.github).
-
-**9. Release.** Tags are annotated, and the message is the release notes:
-GoReleaser renders it above the generated commit list, so the page opens with a
-sentence somebody wrote instead of a list of subjects.
-
-```sh
-git tag -a v0.1.0 -m "What changed for somebody running the tool."
-git push origin v0.1.0
-```
-
-Then `make readme`, to put the new version in the download line. CI runs the checks
-and GoReleaser attaches the static binaries. The tool then appears on
-[tui-tools.github.io](https://tui-tools.github.io) on its next build, which is
-hourly.
 
 ## Compatibility
 
@@ -355,78 +250,31 @@ hourly.
 <!-- Generated by tui-kit/tools/render-compat.py from tool.json. -->
 <!-- Edit the manifest, then run `make readme`. -->
 
-`tui-template` probes its backend once at startup and shows the version in the
+`tui-tailscale` probes its backend once at startup and shows the version in the
 header. A version nobody has tested is marked `(untested)` there rather than
 hidden; one below the minimum is marked as such and the tool still runs.
 
-### coreutils
+### tailscale
 
 | | |
 | --- | --- |
-| Binary | `touch` |
-| Version read with | `touch --version` |
-| Minimum | 8.0 |
-| Tested | none yet |
-| Version-gated features | `no-dereference` (since 8.1) |
-
-| Versions | What changes |
-| --- | --- |
-| `<8.1` | `touch -h` is missing, so the timestamp of a symlink is set on its target instead of on the link |
+| Binary | `tailscale` |
+| Version read with | `tailscale version` |
+| Minimum | 1.60.0 |
+| Tested | `1.98.4` |
 
 The tested versions are generated from `compat/results.jsonl`, which the tool's
 own smoke test appends to when it runs against a real machine in
 [tui-lab](https://github.com/tui-tools/tui-lab).
 <!-- compat:end -->
 
-## The rules
-
-These are what make the family a family rather than a folder of unrelated
-programs. Keep them, or the tool does not belong in it.
-
-- **Preview, then confirm.** Nothing changes the system without first showing
-  the exact command line. Build a `runner.Command`, show it with `ui.Confirm`,
-  hand that same value back to the runner. The dialog is the only path to a
-  mutation.
-- **Read-only by default.** Starting the tool only reads.
-- **No daemon, no state of its own.** The system is the source of truth; re-read
-  it after every change.
-- **`--demo` always works.** It builds and previews every command for real, and
-  touches nothing. A reviewer must be able to try the tool without a machine to
-  risk.
-- **Backend behind an interface.** The UI never names a binary.
-- **Small dependencies.** Bubble Tea, Bubbles, Lip Gloss and the kit.
-- **English everywhere**: code, comments, commits, UI strings.
-- **Responsive.** Layouts adapt from a 40-column pane to a full screen.
-
-## Tests worth writing
-
-`internal/tool/tool_test.go` shows the two that carry the tool:
-
-- **the command that runs is the command the preview showed**, character for
-  character — assert on `Fake.Commands()` after driving a key;
-- **nothing runs that was not confirmed** — cancel, then assert the fake
-  recorded nothing.
-
-Then table tests for every parser, against real command output pasted in
-verbatim. When a parser is wrong on someone's machine, their output becomes the
-next case.
-
-Then a fuzz target per parser, in the same package, seeded from the same
-`testdata` — `internal/tool/fuzz_test.go` is the template's example, over the
-one step every tool has: a name from outside becoming an argv. `make check`
-replays the seeds like any other test, and
-[tui-kit/templates/FUZZING.md](https://github.com/tui-tools/tui-kit/blob/main/templates/FUZZING.md)
-is the family rule, including why a crash's input gets committed.
-
 ## Contributing
 
-Contributions to this template, and to any tool built from it, arrive as pull
-requests: [tui-kit's
+Contributions arrive as pull requests: [tui-kit's
 CONTRIBUTING.md](https://github.com/tui-tools/tui-kit/blob/main/CONTRIBUTING.md)
 is the family's process and the bar a change has to clear. A security problem
-is reported the way [tui-kit's
-SECURITY.md](https://github.com/tui-tools/tui-kit/blob/main/SECURITY.md)
-describes, privately, never in a public issue.
+is reported the way [SECURITY.md](SECURITY.md) describes, privately, never in a
+public issue.
 
 ## License
 

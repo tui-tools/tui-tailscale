@@ -1,14 +1,13 @@
-# tui-template configuration.
+# tui-tailscale configuration.
 #
-# Read from /etc/tui-template/config.toml first, then
-# ~/.config/tui-template/config.toml, with the user file overriding the
-# machine-wide one. TUI_TEMPLATE_* environment variables override both, and
+# Read from /etc/tui-tailscale/config.toml first, then
+# ~/.config/tui-tailscale/config.toml, with the user file overriding the
+# machine-wide one. TUI_TAILSCALE_* environment variables override both, and
 # command line flags override everything.
 
-# This tool's own key: the directory to list. Replace it with yours.
-dir = "."
-
-# Privilege escalation prefix used for actions; "" runs the command directly.
+# Privilege escalation prefix used for every change to the node, and for a
+# read tailscaled refuses to this user; "" runs the commands directly (as
+# root, or as a user set with `tailscale set --operator`).
 sudo = "sudo -n"
 
 # Path to an Omarchy-style colors.toml. Empty follows the active Omarchy
@@ -16,5 +15,4 @@ sudo = "sudo -n"
 theme = ""
 
 # Every key can also be set in the environment, upper-cased and prefixed:
-#   TUI_TEMPLATE_DIR=/srv
-#   TUI_TEMPLATE_SUDO="doas"
+#   TUI_TAILSCALE_SUDO="doas"

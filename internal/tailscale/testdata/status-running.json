@@ -1,0 +1,214 @@
+{
+  "Version": "1.98.4-t0000000000-g0000000000",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": [
+    "100.64.0.1",
+    "fd7a:115c:a1e0::1"
+  ],
+  "Self": {
+    "ID": "1",
+    "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000000",
+    "HostName": "example-node",
+    "DNSName": "example-node.tailnet.example.com.",
+    "OS": "linux",
+    "UserID": 1,
+    "TailscaleIPs": [
+      "100.64.0.1",
+      "fd7a:115c:a1e0::1"
+    ],
+    "AllowedIPs": [
+      "100.64.0.1/32",
+      "fd7a:115c:a1e0::1/128"
+    ],
+    "Addrs": [
+      "192.0.2.1:41641",
+      "[2001:db8::1]:41641"
+    ],
+    "CurAddr": "",
+    "Relay": "example",
+    "PeerRelay": "",
+    "RxBytes": 0,
+    "TxBytes": 0,
+    "Created": "2026-09-01T12:00:00Z",
+    "LastWrite": "0001-01-01T00:00:00Z",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "LastHandshake": "0001-01-01T00:00:00Z",
+    "Online": true,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "PeerAPIURL": [
+      "http://100.64.0.1:58436"
+    ],
+    "TaildropTarget": 0,
+    "NoFileSharingReason": "",
+    "InNetworkMap": true,
+    "InMagicSock": false,
+    "InEngine": false,
+    "Capabilities": [
+      "https://tailscale.com/cap/file-sharing",
+      "https://tailscale.com/cap/ssh"
+    ],
+    "CapMap": {
+      "https://tailscale.com/cap/file-sharing": [],
+      "https://tailscale.com/cap/ssh": []
+    }
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tailnet.example.com",
+  "CurrentTailnet": {
+    "Name": "headscale.example.com",
+    "MagicDNSSuffix": "tailnet.example.com",
+    "MagicDNSEnabled": true
+  },
+  "CertDomains": null,
+  "Peer": {
+    "nodekey:1111111111111111111111111111111111111111111111111111111111111111": {
+      "ID": "2",
+      "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000000",
+      "HostName": "exit-gateway",
+      "DNSName": "exit-gateway.tailnet.example.com.",
+      "OS": "linux",
+      "UserID": 1,
+      "TailscaleIPs": [
+        "100.64.0.2",
+        "fd7a:115c:a1e0::2"
+      ],
+      "AllowedIPs": [
+        "100.64.0.2/32",
+        "fd7a:115c:a1e0::2/128",
+        "0.0.0.0/0",
+        "::/0"
+      ],
+      "Addrs": [
+        "192.0.2.10:41641",
+        "[2001:db8::10]:41641"
+      ],
+      "CurAddr": "",
+      "Relay": "example",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-09-01T12:00:00Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-09-24T20:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": true,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.2:58436"
+      ],
+      "TaildropTarget": 0,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": true
+    },
+    "nodekey:2222222222222222222222222222222222222222222222222222222222222222": {
+      "ID": "3",
+      "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000000",
+      "HostName": "office-router",
+      "DNSName": "office-router.tailnet.example.com.",
+      "OS": "linux",
+      "UserID": 2,
+      "TailscaleIPs": [
+        "100.64.0.3",
+        "fd7a:115c:a1e0::3"
+      ],
+      "AllowedIPs": [
+        "100.64.0.3/32",
+        "fd7a:115c:a1e0::3/128",
+        "192.0.2.0/24"
+      ],
+      "Addrs": [
+        "192.0.2.10:41641",
+        "[2001:db8::10]:41641"
+      ],
+      "CurAddr": "",
+      "Relay": "example",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-09-01T12:00:00Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-09-24T20:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.3:58436"
+      ],
+      "TaildropTarget": 0,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": true,
+      "PrimaryRoutes": [
+        "192.0.2.0/24"
+      ]
+    },
+    "nodekey:3333333333333333333333333333333333333333333333333333333333333333": {
+      "ID": "4",
+      "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000000",
+      "HostName": "laptop",
+      "DNSName": "laptop.tailnet.example.com.",
+      "OS": "macOS",
+      "UserID": 1,
+      "TailscaleIPs": [
+        "100.64.0.4",
+        "fd7a:115c:a1e0::4"
+      ],
+      "AllowedIPs": [
+        "100.64.0.4/32",
+        "fd7a:115c:a1e0::4/128"
+      ],
+      "Addrs": [
+        "192.0.2.10:41641",
+        "[2001:db8::10]:41641"
+      ],
+      "CurAddr": "",
+      "Relay": "example",
+      "PeerRelay": "",
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-09-01T12:00:00Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-09-20T08:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "PeerAPIURL": [
+        "http://100.64.0.4:58436"
+      ],
+      "TaildropTarget": 0,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": true
+    }
+  },
+  "User": {
+    "1": {
+      "ID": 1,
+      "LoginName": "user@example.com",
+      "DisplayName": "Example User",
+      "ProfilePicURL": ""
+    },
+    "2": {
+      "ID": 2,
+      "LoginName": "ops@example.com",
+      "DisplayName": "Example Ops",
+      "ProfilePicURL": ""
+    }
+  },
+  "ClientVersion": null
+}

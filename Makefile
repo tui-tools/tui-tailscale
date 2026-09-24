@@ -1,8 +1,8 @@
-# tui-template — build, test and lint.
+# tui-tailscale — build, test and lint.
 
 GO      ?= go
 BIN     ?= bin
-TOOL    := tui-template
+TOOL    := tui-tailscale
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 # The screenshot renderer is shared by the whole family and ships with the
@@ -65,7 +65,11 @@ tidy:
 screenshots: build
 	python3 $(KIT)/tools/render-screenshots.py \
 		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
-		--screen main= --screen touch=t --screen help=?
+		--budget 12 --rows 32 --window 1000,660 \
+		--screen node= --screen peers=2 \
+		--screen 'join=j\r0123456789abcdef\r\r\r192.0.2.0/24\r\r' \
+		--screen 'login=Lyj\r\r\r\r\r\ry' \
+		--screen exit=x --screen help=?
 
 ## readme: regenerate the generated README sections from tool.json.
 readme:

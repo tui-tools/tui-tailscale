@@ -1,0 +1,50 @@
+{
+	"ControlURL": "https://headscale.example.com",
+	"RouteAll": true,
+	"ExitNodeID": "",
+	"ExitNodeIP": "",
+	"InternalExitNodePrior": "",
+	"ExitNodeAllowLANAccess": false,
+	"CorpDNS": true,
+	"RunSSH": false,
+	"RunWebClient": false,
+	"WantRunning": true,
+	"LoggedOut": false,
+	"ShieldsUp": false,
+	"AdvertiseTags": null,
+	"Hostname": "",
+	"NotepadURLs": false,
+	"AdvertiseRoutes": [
+		"192.0.2.0/24",
+		"0.0.0.0/0",
+		"::/0"
+	],
+	"AdvertiseServices": null,
+	"Sync": null,
+	"NoSNAT": false,
+	"NoStatefulFiltering": true,
+	"NetfilterMode": 2,
+	"AutoUpdate": {
+		"Check": true,
+		"Apply": false
+	},
+	"AppConnector": {
+		"Advertise": false
+	},
+	"PostureChecking": false,
+	"NetfilterKind": "",
+	"DriveShares": null,
+	"AllowSingleHosts": true,
+	"Config": {
+		"PrivateNodeKey": "privkey:0000000000000000000000000000000000000000000000000000000000000000",
+		"OldPrivateNodeKey": "privkey:0000000000000000000000000000000000000000000000000000000000000000",
+		"UserProfile": {
+			"ID": 1,
+			"LoginName": "user@example.com",
+			"DisplayName": "Example User",
+			"ProfilePicURL": ""
+		},
+		"NetworkLockKey": "nlpriv:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+		"NodeID": "1"
+	}
+}
