@@ -31,7 +31,7 @@ func TestRunReportDemo(t *testing.T) {
 	for _, want := range []string{
 		"backend: demo\n",
 		"mode: demo (sample data, the system was not read)\n",
-		"demo backend: " + listerName + "\n",
+		"demo backend: " + backendName + "\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report is missing %q:\n%s", want, got)
@@ -58,26 +58,20 @@ func TestRunReportLive(t *testing.T) {
 	}
 }
 
-// TestRunReportSurvivesAMissingBackend is the case a report exists for: a
-// machine the tool cannot drive at all. It must still produce a block, with
-// the failure as one of its lines and the path in that failure scrubbed.
-func TestRunReportSurvivesAMissingBackend(t *testing.T) {
-	cfg := baseConfig()
-	// "ana" is one of the family's stand-in names, which the secret scanner
-	// knows is invented rather than captured from somebody's machine.
-	cfg.Set(keyDir, "/home/ana/not-a-directory")
-
+// TestRunReportCarriesTheClientFacts checks the lines this tool adds on a
+// live run: whether the client is installed, and whether tailscaled answers.
+// They are there whatever this machine has, because "not installed" and "not
+// running" are exactly what a report has to be able to say.
+func TestRunReportCarriesTheClientFacts(t *testing.T) {
 	var out strings.Builder
-	if err := runReport(cfg, options{report: true}, &out); err != nil {
+	if err := runReport(baseConfig(), options{report: true}, &out); err != nil {
 		t.Fatalf("runReport: %v", err)
 	}
-
 	got := out.String()
-	if !strings.Contains(got, "backend error: ") {
-		t.Errorf("report should carry the reason no backend was built:\n%s", got)
-	}
-	if strings.Contains(got, "/home/") {
-		t.Errorf("the backend error was not scrubbed:\n%s", got)
+	for _, want := range []string{"\ntailscale: ", "\ntailscaled: "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report is missing %q:\n%s", strings.TrimSpace(want), got)
+		}
 	}
 }
 
@@ -129,7 +123,7 @@ func assertAbsent(t *testing.T, block, name, what string) {
 }
 
 // TestScrubHome covers the one value this tool passes into the block that
-// could name its user: the directory it was asked to list.
+// could name its user: a backend error quoting a path.
 func TestScrubHome(t *testing.T) {
 	tests := []struct {
 		name string
@@ -142,7 +136,7 @@ func TestScrubHome(t *testing.T) {
 			"~elsewhere~ is not a directory"},
 		{"a path that names nobody", "/srv/data is not a directory",
 			"/srv/data is not a directory"},
-		{"nothing to scrub", "touch was not found", "touch was not found"},
+		{"nothing to scrub", "tailscale was not found", "tailscale was not found"},
 	}
 
 	for _, tc := range tests {

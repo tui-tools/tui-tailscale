@@ -1,0 +1,6 @@
+
+To authenticate, visit:
+
+	https://headscale.example.com/register/0000000000000000000000000000
+
+timeout waiting for Tailscale service to enter a Running state; check health with "tailscale status"

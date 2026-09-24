@@ -1,0 +1,10 @@
+Warning: client version "1.96.0-t0000000000" != tailscaled server version "1.98.4-t0000000000"
+{
+  "Version": "1.98.4-t0000000000-g0000000000",
+  "BackendState": "Stopped",
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.0.1"],
+  "Self": {"ID": "1", "HostName": "example-node", "DNSName": "example-node.tailnet.example.com.", "OS": "linux", "UserID": 1, "TailscaleIPs": ["100.64.0.1"], "Online": false},
+  "Peer": null,
+  "User": {"1": {"ID": 1, "LoginName": "user@example.com", "DisplayName": "Example User"}}
+}

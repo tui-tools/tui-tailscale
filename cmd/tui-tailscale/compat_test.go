@@ -5,14 +5,13 @@ import (
 	"testing"
 
 	"github.com/tui-tools/tui-kit/manifest"
-	tuitemplate "github.com/tui-tools/tui-template"
+	tuitailscale "github.com/tui-tools/tui-tailscale"
 )
 
-// The embedded manifest is what the header reads. A tool started from the
-// template inherits this test, so its own backends block cannot be malformed
-// for long.
+// The embedded manifest is what the header reads, so its backends block
+// cannot be malformed for long.
 func TestEmbeddedManifestDeclaresItsBackend(t *testing.T) {
-	m, err := manifest.Load(tuitemplate.ManifestJSON)
+	m, err := manifest.Load(tuitailscale.ManifestJSON)
 	if err != nil {
 		t.Fatalf("the embedded tool.json does not parse: %v", err)
 	}
