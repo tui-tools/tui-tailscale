@@ -772,4 +772,8 @@ type Backend interface {
 	Preview(cmd runner.Command) string
 	// Run executes a previously previewed command.
 	Run(ctx context.Context, cmd runner.Command) (string, error)
+	// Reprobe forgets which binaries were found and how to run them, so the
+	// next read detects them again: after an install, a binary that was
+	// missing at start-up is there.
+	Reprobe()
 }

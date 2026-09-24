@@ -164,7 +164,24 @@ type app struct {
 	loading    bool
 	loadFailed bool
 	busy       bool
+
+	// probe re-reads the backends' versions for the header; nil keeps the
+	// ones the app started with (tests).
+	probe func() []compat.Result
+	// settling is the moment right after a change — an install, a start or
+	// restart, down, up, logout, a join — when a daemon that is still coming
+	// up refuses its socket. A read that fails then is shown as "not running
+	// yet", and is retried once after settleDelay; settleRetried records that
+	// the retry was spent.
+	settling      bool
+	settleRetried bool
 }
+
+// settleDelay is how long the one automatic re-read after a change waits.
+var settleDelay = time.Second
+
+// settleMsg asks for the automatic re-read after a change.
+type settleMsg struct{}
 
 // loadedMsg carries the result of a read: the node and the control plane,
 // read together so the two halves of the screen never disagree about when.
@@ -172,6 +189,10 @@ type loadedMsg struct {
 	state   tailscale.State
 	hsState headscale.State
 	err     error
+	// probed carries the re-read versions when the read followed a change
+	// and reprobed says it did.
+	probed   []compat.Result
+	reprobed bool
 }
 
 // ranMsg carries the result of one confirmed control-plane command.
@@ -218,16 +239,66 @@ func (a *app) Init() tea.Cmd { return a.load() }
 // plane.
 func (a *app) load() tea.Cmd {
 	backend, hs := a.backend, a.hs
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		state, err := backend.Load(ctx)
-		if err != nil {
-			return loadedMsg{err: err}
-		}
-		hsState, err := hs.Load(ctx)
-		return loadedMsg{state: state, hsState: hsState, err: err}
+	return func() tea.Msg { return readBoth(backend, hs) }
+}
+
+// readBoth is one read of the node and the control plane.
+func readBoth(backend tailscale.Backend, hs headscale.Backend) loadedMsg {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	state, err := backend.Load(ctx)
+	if err != nil {
+		return loadedMsg{err: err}
 	}
+	hsState, err := hs.Load(ctx)
+	return loadedMsg{state: state, hsState: hsState, err: err}
+}
+
+// reloadAfterChange is the read that follows every confirmed change. The
+// backends forget the binaries they found — an install may have just put one
+// there — the versions are probed again for the header, and the read that
+// follows is a settling one: a daemon still coming up is "not running yet",
+// re-read once automatically.
+func (a *app) reloadAfterChange() tea.Cmd {
+	a.loading = true
+	a.settling, a.settleRetried = true, false
+	backend, hs, probe := a.backend, a.hs, a.probe
+	return func() tea.Msg {
+		backend.Reprobe()
+		hs.Reprobe()
+		msg := readBoth(backend, hs)
+		if probe != nil {
+			msg.probed, msg.reprobed = probe(), true
+		}
+		return msg
+	}
+}
+
+// settleRead handles a read taken while settling: when a daemon that should
+// answer does not, its state says "not running yet" instead of the error the
+// socket gave, and one more read is scheduled; once both answer, or after the
+// retry, the moment is over.
+func (a *app) settleRead() tea.Cmd {
+	unsettled := false
+	s := &a.state
+	if s.Installed && !s.DaemonRunning {
+		unsettled = true
+		s.Error = "tailscaled is not running yet · r re-reads"
+		s.NotRunning, s.PermissionDenied = true, false
+	}
+	h := &a.hsState
+	if h.Present && h.Error != "" && !h.NotRunning {
+		unsettled = true
+		h.Error = "headscale is not running yet · r re-reads"
+		h.NotRunning = true
+		h.Users, h.Nodes, h.PreAuthKeys = nil, nil, nil
+	}
+	if !unsettled || a.settleRetried {
+		a.settling = false
+		return nil
+	}
+	a.settleRetried = true
+	return tea.Tick(settleDelay, func(time.Time) tea.Msg { return settleMsg{} })
 }
 
 // run executes one confirmed control-plane command in the background.
@@ -328,14 +399,28 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loadFailed = false
 		a.state = msg.state
 		a.hsState = msg.hsState
+		if msg.reprobed {
+			a.backendCompat = compatFor(msg.probed, backendName)
+			a.hsCompat = compatFor(msg.probed, backendHeadscale)
+		}
+		var retry tea.Cmd
+		if a.settling {
+			retry = a.settleRead()
+		}
 		a.clampCursor()
-		return a, nil
+		return a, retry
+
+	case settleMsg:
+		if !a.settling {
+			return a, nil
+		}
+		a.loading = true
+		return a, a.load()
 
 	case planRanMsg:
 		a.busy = false
-		a.loading = true
 		a.planResult(msg)
-		return a, a.load()
+		return a, a.reloadAfterChange()
 
 	case hsPlanRanMsg:
 		a.busy = false
@@ -345,7 +430,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.setStatus(ui.StatusOK, "headscale installed · S configures it and starts the unit")
 		}
-		return a, a.load()
+		return a, a.reloadAfterChange()
 
 	case ranMsg:
 		return a, a.ranResult(msg)
@@ -401,6 +486,10 @@ func (a *app) planResult(msg planRanMsg) {
 		a.setStatus(ui.StatusError, cleanupMessage(msg.cleanupErr))
 	case msg.err != nil:
 		a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
+	case msg.plan.Action == tailscale.ActionInstall:
+		// The package manager's first line of output ("Get:1 …") says
+		// nothing about the result.
+		a.setStatus(ui.StatusOK, "tailscale installed · j joins a tailnet")
 	default:
 		summary := strings.TrimSpace(msg.output)
 		if summary == "" {
@@ -640,7 +729,8 @@ func (a *app) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "r" && a.screen == screenNodes {
 			break
 		}
-		a.loading = true
+		// A reload by hand shows what the socket says, whatever it is.
+		a.loading, a.settling = true, false
 		return a, a.load()
 	}
 	if a.screen.controlPlane() {

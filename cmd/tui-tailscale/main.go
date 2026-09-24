@@ -21,6 +21,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/config"
 	"github.com/tui-tools/tui-kit/theme"
 	"github.com/tui-tools/tui-tailscale/internal/headscale"
@@ -161,8 +162,11 @@ func run(args []string) error {
 			checkOptions{probeIssuer: opts.probeIssuer})
 	}
 
-	program := tea.NewProgram(newApp(backend, hs, theme.New(), backendCompat),
-		tea.WithAltScreen())
+	model := newApp(backend, hs, theme.New(), backendCompat)
+	// After a change the versions are probed again, so an install shows its
+	// version in the header without a restart.
+	model.probe = func() []compat.Result { return probeCompat(context.Background(), opts.demo) }
+	program := tea.NewProgram(model, tea.WithAltScreen())
 	_, err = program.Run()
 	return err
 }

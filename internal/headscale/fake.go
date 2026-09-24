@@ -41,6 +41,12 @@ type Fake struct {
 	// it, and the ownership check reads it, exactly like the real ones.
 	stats map[string]FileStat
 	run   *runner.Fake
+	// absent is whether headscale is on the fake machine; detected whether
+	// the backend has found it — which, like the real backend's runner cache,
+	// only changes on Reprobe. refuse counts the CLI reads that fail while the
+	// server is still coming up.
+	absent, detected bool
+	refuse           int
 }
 
 // demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake.
@@ -57,7 +63,8 @@ const DemoServerURL = "https://headscale.example.com"
 // what the readiness line points at first.
 func NewFake() *Fake {
 	f := &Fake{state: demoState(), config: demoHeadscaleConfig,
-		serviceState: "active", serviceEnabled: "disabled", stats: demoStats()}
+		serviceState: "active", serviceEnabled: "disabled", stats: demoStats(),
+		detected: true}
 	f.run = &runner.Fake{Prefix: "sudo -n", Hook: f.apply}
 	f.reloadControlPlane()
 	return f
@@ -245,13 +252,40 @@ func (f *Fake) Run(ctx context.Context, cmd runner.Command) (string, error) {
 // Commands returns every command the fake was asked to run, for the tests.
 func (f *Fake) Commands() []runner.Command { return f.run.Ran }
 
+// SetAbsent takes headscale off the fake machine, with the tui-tools
+// repository not set up yet: `i` installs it, and the next Reprobe finds it.
+func (f *Fake) SetAbsent() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.absent, f.detected = true, false
+}
+
+// Reprobe finds headscale again, when it is there.
+func (f *Fake) Reprobe() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.detected = !f.absent
+}
+
 // Load returns a copy of the sample state. With the demo unit stopped it
 // answers the way the real backend does: the configuration and the unit's
 // state, and no lists, because the CLI would have nothing to talk to.
 func (f *Fake) Load(_ context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !f.detected {
+		return State{Distro: f.state.Distro}, nil
+	}
 	state := f.state
+	if f.refuse > 0 {
+		// The socket is not up yet: the CLI's own error, as the first read
+		// after an install on a real host printed it.
+		f.refuse--
+		state.Error = "connecting to headscale: dial unix /var/run/headscale/headscale.sock: " +
+			"connect: permission denied"
+		state.Users, state.Nodes, state.PreAuthKeys = nil, nil, nil
+		return state, nil
+	}
 	state.Users = append([]User(nil), f.state.Users...)
 	state.Nodes = append([]Node(nil), f.state.Nodes...)
 	state.PreAuthKeys = append([]PreAuthKey(nil), f.state.PreAuthKeys...)
@@ -313,6 +347,14 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 		// The downloaded repository key, read back: the pinned one.
 		return "pub:-:4096:1:389120B277E4FB44:1790000000:::-:::scESC::::::23::0:\n" +
 			"fpr:::::::::" + RepoFingerprint + ":\n", nil
+	case len(argv) >= 1 && (argv[0] == "apt-get" || argv[0] == "dnf" || argv[0] == "pacman") &&
+		(hasArg(argv, PackageName) || hasArg(argv, "tui-tools/"+PackageName)):
+		// The package install puts headscale on the machine; its socket
+		// takes a moment to answer after it.
+		if f.absent {
+			f.absent, f.refuse = false, 1
+		}
+		return "", nil
 	case len(argv) >= 1 && isInstallStep(argv[0]):
 		// The companion install changes files and packages the demo does not
 		// model.

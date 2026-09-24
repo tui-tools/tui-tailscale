@@ -322,7 +322,9 @@ func (a *app) header() string {
 // or what stands in for one.
 func (a *app) backendFacts() []ui.Fact {
 	var facts []ui.Fact
-	if a.backendCompat.Backend != "" {
+	// Without the client the header already says "not installed"; a
+	// "version unknown" badge next to it would say it twice.
+	if a.backendCompat.Backend != "" && a.state.Installed {
 		fact := ui.CompatFact(a.theme, a.backendCompat)
 		fact.Label = "client"
 		facts = append(facts, fact)

@@ -26,6 +26,12 @@ type Fake struct {
 	mu    sync.Mutex
 	state State
 	run   *runner.Fake
+	// absent is whether the client is on the fake machine; detected whether
+	// the backend has found it — which, like the real backend's runner cache,
+	// only changes on Reprobe. refuse counts the reads tailscaled refuses
+	// while it is still coming up after an install.
+	absent, detected bool
+	refuse           int
 }
 
 // DemoLoginServer is the control plane the demo node is joined to.
@@ -37,7 +43,7 @@ const DemoRegisterPath = "/register/demo-registration-key"
 
 // NewFake returns a Fake preloaded with the demo tailnet.
 func NewFake() *Fake {
-	f := &Fake{state: demoState()}
+	f := &Fake{state: demoState(), detected: true}
 	f.run = &runner.Fake{Prefix: "sudo -n", Hook: f.apply}
 	return f
 }
@@ -59,10 +65,36 @@ func (f *Fake) Run(ctx context.Context, cmd runner.Command) (string, error) {
 // Commands returns every command the fake was asked to run, for the tests.
 func (f *Fake) Commands() []runner.Command { return f.run.Ran }
 
+// SetAbsent takes the client off the fake machine, the way a host without
+// tailscale starts: `i` installs it, and the next Reprobe finds it.
+func (f *Fake) SetAbsent() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.absent, f.detected = true, false
+}
+
+// Reprobe finds the client again, when it is there.
+func (f *Fake) Reprobe() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.detected = !f.absent
+}
+
 // Load returns a copy of the demo state.
 func (f *Fake) Load(_ context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !f.detected {
+		return State{Distro: f.state.Distro}, nil
+	}
+	if f.refuse > 0 {
+		// The socket is not up yet: what the real backend reports when
+		// tailscaled refuses a read, as the first read after an install did.
+		f.refuse--
+		return State{Installed: true, Distro: f.state.Distro, PermissionDenied: true,
+			Error: "tailscaled refused this user — run with sudo, or make this user " +
+				"the operator (`sudo tailscale set --operator=$USER`)"}, nil
+	}
 	s := f.state
 	s.Peers = append([]Peer(nil), f.state.Peers...)
 	s.Node.IPs = append([]string(nil), f.state.Node.IPs...)
@@ -88,7 +120,14 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 		return "", fmt.Errorf("malformed command %q", cmd)
 	}
 	switch cmd.Argv[0] {
-	case "install", "rm", "sysctl", "curl", "apt-get", "dnf", "pacman", "systemctl":
+	case "apt-get", "dnf", "pacman":
+		// The package install puts the client on the machine; tailscaled
+		// takes a moment to answer after it.
+		if contains(cmd.Argv, "tailscale") && f.absent {
+			f.absent, f.refuse = false, 1
+		}
+		return "", nil
+	case "install", "rm", "sysctl", "curl", "systemctl":
 		// The helpers change files the demo does not model.
 		return "", nil
 	case "tailscale":

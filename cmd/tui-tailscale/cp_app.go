@@ -179,18 +179,17 @@ func (a *app) ranResult(msg ranMsg) tea.Cmd {
 		a.after = nil
 		a.cpDraft.forgetSecret()
 		a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
-		return a.load()
+		return a.reloadAfterChange()
 	}
 
 	// A chained flow takes over the next step; the reload still happens
 	// underneath it.
 	if next := a.after; next != nil {
 		a.after = nil
-		a.loading = true
 		if cmd := next(msg.output); cmd != nil {
-			return tea.Batch(cmd, a.load())
+			return tea.Batch(cmd, a.reloadAfterChange())
 		}
-		return a.load()
+		return a.reloadAfterChange()
 	}
 
 	// A created pre-auth key is printed by headscale exactly once, and shown
@@ -199,8 +198,7 @@ func (a *app) ranResult(msg ranMsg) tea.Cmd {
 	if isPreAuthCreate(msg.cmd) {
 		a.setStatusf(ui.StatusWarn, "pre-auth key (shown once — copy it now): %s",
 			lastLine(msg.output))
-		a.loading = true
-		return a.load()
+		return a.reloadAfterChange()
 	}
 
 	summary := strings.TrimSpace(msg.output)
@@ -208,8 +206,7 @@ func (a *app) ranResult(msg ranMsg) tea.Cmd {
 		summary = "done"
 	}
 	a.setStatusf(ui.StatusOK, "%s: %s", msg.cmd.Description, runner.FirstLine(summary))
-	a.loading = true
-	return a.load()
+	return a.reloadAfterChange()
 }
 
 // openConfirmPreAuthKey parses the pre-auth key input line and opens the
