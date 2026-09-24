@@ -327,11 +327,11 @@ func TestInstallPlans(t *testing.T) {
 			"systemctl enable --now tailscaled",
 		}},
 		{"arch", arch, []string{
-			"pacman -S --needed --noconfirm tailscale",
+			"pacman -Syu --needed --noconfirm tailscale",
 			"systemctl enable --now tailscaled",
 		}},
 		{"omarchy", omarchy, []string{
-			"pacman -S --needed --noconfirm tailscale",
+			"pacman -Syu --needed --noconfirm tailscale",
 			"systemctl enable --now tailscaled",
 		}},
 	}

@@ -156,7 +156,7 @@ else
     pacman)
       check "check gives the pacman install" \
         "$bin --check" \
-        'sudo pacman -S --needed --noconfirm tailscale'
+        'sudo pacman -Syu --needed --noconfirm tailscale'
       ;;
   esac
 fi
