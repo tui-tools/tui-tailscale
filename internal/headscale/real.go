@@ -219,6 +219,14 @@ func (r *Real) Reprobe() {
 	r.missing = map[string]error{}
 }
 
+// forgetMiss drops a binary's remembered miss, so the next use resolves it
+// again.
+func (r *Real) forgetMiss(bin string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.missing, bin)
+}
+
 // Preview renders the command the way its binary's runner would, so the
 // privilege prefix in the dialog is the real one.
 func (r *Real) Preview(cmd runner.Command) string {

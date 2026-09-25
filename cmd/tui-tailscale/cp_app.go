@@ -170,6 +170,25 @@ func (a *app) startInstallHeadscale() tea.Cmd {
 		a.setStatus(ui.StatusError, err.Error())
 		return nil
 	}
+	a.openPlanConfirm(plan)
+	return nil
+}
+
+// startInstallFirewall opens the install of tui-firewall, when f finds it
+// missing: the tui-tools repository when it is not configured, then the
+// package.
+func (a *app) startInstallFirewall() tea.Cmd {
+	plan, err := headscale.BuildInstallFirewall(a.hsState.Distro, a.hsState.Repo)
+	if err != nil {
+		a.setStatus(ui.StatusWarn, "tui-firewall is not installed · "+err.Error())
+		return nil
+	}
+	a.openPlanConfirm(plan)
+	return nil
+}
+
+// openPlanConfirm previews a multi-step plan in one confirm.
+func (a *app) openPlanConfirm(plan headscale.Plan) {
 	previews := make([]string, 0, len(plan.Steps))
 	for _, cmd := range plan.Steps {
 		previews = append(previews, a.hs.Preview(cmd))
@@ -181,7 +200,6 @@ func (a *app) startInstallHeadscale() tea.Cmd {
 		Command: strings.Join(previews, "\n$ "),
 		Payload: plan,
 	}
-	return nil
 }
 
 // headscaleAnswers reports whether the headscale CLI can take a command, and
@@ -340,17 +358,14 @@ type firewallDoneMsg struct{ err error }
 // this program, tui-firewall draws on the real terminal, and this screen is
 // restored when it exits, then the ports are read again. It is not previewed
 // as a change because it is not one: tui-firewall previews and confirms
-// whatever it changes (issue #15).
+// whatever it changes (issue #15). The binary is looked for at the moment f
+// is pressed, not taken from the last read, so one installed in another
+// terminal is found; when it is not there, f offers its install, previewed
+// like i's (issue #25).
 func (a *app) launchFirewall() tea.Cmd {
-	if !a.hsState.Firewall.Launchable {
-		a.setStatus(ui.StatusWarn, "tui-firewall is not installed · it comes from pkgs.tui.tools "+
-			"(the same repository as headscale)")
-		return nil
-	}
 	process, err := a.hs.LaunchFirewall()
 	if err != nil {
-		a.setStatus(ui.StatusError, err.Error())
-		return nil
+		return a.startInstallFirewall()
 	}
 	a.busy = true
 	a.setStatusf(ui.StatusInfo, "running %s…", process)

@@ -87,6 +87,9 @@ type Plan struct {
 	// Reinstall marks the plan that restores a deleted configuration, whose
 	// result the screens word differently from a first install.
 	Reinstall bool
+	// Done is the status line once the plan ran, when it is not the
+	// headscale install's.
+	Done string
 }
 
 // CheckStep is called with each step's output as the plan runs; it stops the
@@ -106,6 +109,34 @@ func (p Plan) CheckStep(i int, out string) error {
 // BuildInstall assembles the install plan for a distribution: the tui-tools
 // repository when it is not configured yet, then the package.
 func BuildInstall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
+	plan, err := buildInstall(d, repo, PackageName)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.Body += "\n\nheadscale is the family's source-built mirror of the upstream " +
+		"release, signed and attested like every tool. The package ships the binary, a " +
+		"hardened unit and an example /etc/headscale/config.yaml, and does not start the " +
+		"unit: S configures it and ends with the enable."
+	return plan, nil
+}
+
+// BuildInstallFirewall assembles the install of tui-firewall, the family's
+// firewall tool f hands the terminal to (issue #25): from the same tui-tools
+// repository as headscale, set up first when it is not there yet.
+func BuildInstallFirewall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
+	plan, err := buildInstall(d, repo, FirewallTool)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.Body += "\n\ntui-firewall is the family's firewall tool. Installing it changes no " +
+		"rule: f hands the terminal to it once it is here, and it previews and confirms " +
+		"every port it opens. The readiness line reads the ports through it from then on."
+	plan.Done = "tui-firewall installed · f opens it"
+	return plan, nil
+}
+
+// buildInstall is the install of one package from the tui-tools repository.
+func buildInstall(d pkgmgr.Distro, repo RepoState, pkg string) (Plan, error) {
 	manager := ManagerOf(d)
 	if manager == "" {
 		name := d.String()
@@ -113,9 +144,10 @@ func BuildInstall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
 			name = "this distribution"
 		}
 		return Plan{}, fmt.Errorf("no install plan for %s; set up the tui-tools "+
-			"repository by hand (%s), then install %s", name, ManualInstallURL, PackageName)
+			"repository by hand (%s), then install %s", name, ManualInstallURL, pkg)
 	}
-	plan := Plan{Title: "Install headscale"}
+	what := "Install " + pkg
+	plan := Plan{Title: what}
 	body := []string{}
 	if !repo.Configured {
 		setup, err := pkgmgr.BuildRepoSetup(manager, pkgmgr.RepoConfig{}, RepoFingerprint)
@@ -143,10 +175,10 @@ func BuildInstall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
 	switch manager {
 	case pkgmgr.ManagerAPT:
 		plan.Steps = append(plan.Steps, runner.Command{
-			Argv: []string{"apt-get", "install", "-y", PackageName}, Description: "Install headscale"})
+			Argv: []string{"apt-get", "install", "-y", pkg}, Description: what})
 	case pkgmgr.ManagerDNF:
 		plan.Steps = append(plan.Steps, runner.Command{
-			Argv: []string{"dnf", "install", "-y", PackageName}, Description: "Install headscale"})
+			Argv: []string{"dnf", "install", "-y", pkg}, Description: what})
 	case pkgmgr.ManagerPacman:
 		// Arch carries a headscale of its own; the repository-qualified name
 		// installs the family's source-built mirror whatever the repository
@@ -158,21 +190,17 @@ func BuildInstall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
 		// upgrade, -Syu.
 		if d.Omarchy() {
 			plan.Steps = append(plan.Steps, runner.Command{
-				Argv:        []string{"pacman", "-S", "--needed", "--noconfirm", "tui-tools/" + PackageName},
-				Description: "Install headscale"})
+				Argv:        []string{"pacman", "-S", "--needed", "--noconfirm", "tui-tools/" + pkg},
+				Description: what})
 			body = append(body, pkgmgr.OmarchyNote)
 			break
 		}
 		plan.Steps = append(plan.Steps, runner.Command{
-			Argv:        []string{"pacman", "-Syu", "--needed", "--noconfirm", "tui-tools/" + PackageName},
-			Description: "Upgrade the system and install headscale"})
+			Argv:        []string{"pacman", "-Syu", "--needed", "--noconfirm", "tui-tools/" + pkg},
+			Description: "Upgrade the system and install " + pkg})
 		body = append(body, "pacman refreshes the package databases and, because Arch "+
 			"supports no partial upgrade, upgrades the rest of the machine along with it (-Syu).")
 	}
-	body = append(body, "headscale is the family's source-built mirror of the upstream "+
-		"release, signed and attested like every tool. The package ships the binary, a "+
-		"hardened unit and an example /etc/headscale/config.yaml, and does not start the "+
-		"unit: S configures it and ends with the enable.")
 	plan.Body = strings.Join(body, "\n\n")
 	return plan, nil
 }

@@ -396,8 +396,16 @@ func readBoth(backend tailscale.Backend, hs headscale.Backend) loadedMsg {
 // follows is a settling one: a daemon still coming up is "not running yet",
 // re-read once automatically.
 func (a *app) reloadAfterChange() tea.Cmd {
+	return a.reprobeRead(true)
+}
+
+// reprobeRead is a read after the backends forget the binaries they found,
+// with the versions probed again: after a confirmed change (settling), after
+// r, and when tui-firewall hands the terminal back (issue #25), since
+// anything may have been installed in between.
+func (a *app) reprobeRead(settle bool) tea.Cmd {
 	a.loading = true
-	a.settling, a.settleRetried = true, false
+	a.settling, a.settleRetried = settle, false
 	backend, hs, probe := a.backend, a.hs, a.probe
 	return func() tea.Msg {
 		backend.Reprobe()
@@ -584,8 +592,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.setStatus(ui.StatusInfo, "back from tui-firewall · the ports are read again")
 		}
-		a.loading = true
-		return a, a.load()
+		return a, a.reprobeRead(false)
 
 	case ui.RunningTickMsg:
 		if a.running == "" {
@@ -610,6 +617,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
+		case msg.plan.Done != "":
+			a.setStatus(ui.StatusOK, msg.plan.Done)
 		case msg.plan.Reinstall:
 			a.setStatus(ui.StatusOK, "headscale reinstalled · "+headscale.HeadscaleConfigPath+
 				" is back (the package's example) · S configures it and starts the unit")
@@ -1017,9 +1026,10 @@ func (a *app) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "r" && a.screen == screenNodes {
 			break
 		}
-		// A reload by hand shows what the socket says, whatever it is.
-		a.loading, a.settling = true, false
-		return a, a.load()
+		// A reload by hand shows what the socket says, whatever it is, and
+		// looks for the binaries again: one installed in another terminal
+		// (tui-firewall, say) shows up without a restart (issue #25).
+		return a, a.reprobeRead(false)
 	}
 	if a.screen.controlPlane() {
 		return a, a.handleControlPlaneKey(key)

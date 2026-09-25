@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
@@ -107,13 +108,68 @@ func TestFirewallHandOff(t *testing.T) {
 	if a.busy || !a.loading {
 		t.Error("the screen did not come back to a re-read")
 	}
-	// Without tui-firewall, f says where it comes from.
-	fw := headscale.DemoFirewall()
-	fw.Launchable = false
-	a.hsState.Firewall = fw
-	a.Update(key("f"))
-	if !strings.Contains(a.status, "not installed") {
-		t.Errorf("status = %q", a.status)
+}
+
+// Without tui-firewall, f offers its install, previewed like i's; once it
+// ran, the re-read finds it and f hands over (issue #25).
+func TestFirewallInstallFromF(t *testing.T) {
+	a, fake := fixtureApp(t, "")
+	fake.SetFirewallInstalled(false)
+	a.hsState.Firewall.Launchable = false
+	model, _ := a.Update(key("f"))
+	a = model.(*app)
+	if a.mode != modeConfirm || a.confirm.Title != "Install tui-firewall" ||
+		!strings.Contains(a.confirm.Command, "apt-get install -y tui-firewall") {
+		t.Fatalf("mode %v, confirm %+v, status %q", a.mode, a.confirm, a.status)
+	}
+	if len(fake.Launched) != 0 {
+		t.Errorf("launched %q before the install", fake.Launched)
+	}
+	model, cmd := a.Update(key("y"))
+	a = model.(*app)
+	for _, msg := range drain(cmd) {
+		model, cmd = a.Update(msg)
+		a = model.(*app)
+		for _, next := range drain(cmd) {
+			model, _ = a.Update(next)
+			a = model.(*app)
+		}
+	}
+	if !a.hsState.Firewall.Launchable || !strings.Contains(a.status, "tui-firewall installed") {
+		t.Fatalf("after the install: launchable %v, status %q", a.hsState.Firewall.Launchable, a.status)
+	}
+	model, _ = a.Update(key("f"))
+	a = model.(*app)
+	if len(fake.Launched) != 1 || !a.busy {
+		t.Errorf("f after the install: launched %q, busy %v", fake.Launched, a.busy)
+	}
+}
+
+// tui-firewall installed in another terminal is found by f itself, even when
+// the last read did not see it, and r and the return from f read with the
+// binaries looked for again (issue #25).
+func TestFirewallInstalledElsewhereIsFound(t *testing.T) {
+	a, fake := fixtureApp(t, "")
+	a.hsState.Firewall.Launchable = false // the read before the install
+	model, _ := a.Update(key("f"))
+	a = model.(*app)
+	if len(fake.Launched) != 1 {
+		t.Fatalf("f did not find tui-firewall: status %q, mode %v", a.status, a.mode)
+	}
+	probes := 0
+	a.probe = func() []compat.Result { probes++; return nil }
+	model, cmd := a.Update(firewallDoneMsg{})
+	a = model.(*app)
+	drain(cmd)
+	if probes != 1 {
+		t.Errorf("the return from f probed %d times, want 1", probes)
+	}
+	a.setScreen(screenUsers)
+	model, cmd = a.Update(key("r"))
+	a = model.(*app)
+	drain(cmd)
+	if probes != 2 || !a.loading || a.settling {
+		t.Errorf("r: probes %d, loading %v, settling %v", probes, a.loading, a.settling)
 	}
 }
 
