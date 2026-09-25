@@ -29,6 +29,13 @@ type hsSummary struct {
 	// NotRunning reports that the lists were not read because the headscale
 	// unit is stopped; Error then says how to start it.
 	NotRunning bool `json:"notRunning,omitempty"`
+	// ConfigPresent reports that headscale is installed and its config.yaml
+	// exists (issue #18): false with present true is a deleted
+	// configuration, which i restores by reinstalling the package.
+	// StateDirPresent is the same for /var/lib/headscale, which the unit
+	// recreates by itself at the next start.
+	ConfigPresent   bool `json:"configPresent"`
+	StateDirPresent bool `json:"stateDirPresent"`
 	// OIDCConfigured is read from headscale's configuration: an issuer and a
 	// client id are what make identity federated.
 	OIDCConfigured bool `json:"oidcConfigured"`
@@ -166,12 +173,14 @@ type dnsSummary struct {
 func summariseHS(hs headscale.State, now time.Time) hsSummary {
 	cp := hs.ControlPlane
 	summary := hsSummary{
-		Present:        hs.Present,
-		Error:          hs.Error,
-		NotRunning:     hs.NotRunning,
-		OIDCConfigured: hs.OIDCEnabled(),
-		OIDCInferred:   hs.OIDCInferred,
-		OIDCIssuer:     headscale.URLHost(cp.OIDC.Issuer),
+		Present:         hs.Present,
+		Error:           hs.Error,
+		NotRunning:      hs.NotRunning,
+		ConfigPresent:   hs.Present && !cp.ConfigMissing,
+		StateDirPresent: hs.Present && !cp.StateDirMissing,
+		OIDCConfigured:  hs.OIDCEnabled(),
+		OIDCInferred:    hs.OIDCInferred,
+		OIDCIssuer:      headscale.URLHost(cp.OIDC.Issuer),
 		ControlPlane: cpSummary{
 			ConfigPath:             cp.ConfigPath,
 			Readable:               cp.Readable,

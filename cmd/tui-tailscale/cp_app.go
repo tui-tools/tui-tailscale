@@ -67,6 +67,12 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 	case "f":
 		return a.launchFirewall()
 	}
+	if a.hsState.ControlPlane.ConfigMissing && (key == "S" || key == "O" || key == "e" ||
+		(key == "n" && a.screen == screenDNS)) {
+		// Every edit is a diff of a file that is not there.
+		a.setStatus(ui.StatusWarn, headscale.ConfigMissingMessage)
+		return nil
+	}
 	switch a.screen {
 	case screenUsers:
 		switch key {
@@ -147,11 +153,19 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 // startInstallHeadscale opens the companion install: the tui-tools repository
 // when it is not configured yet, then the family's headscale package.
 func (a *app) startInstallHeadscale() tea.Cmd {
-	if a.hsState.Present {
+	var plan headscale.Plan
+	var err error
+	switch {
+	case a.hsState.Present && a.hsState.ControlPlane.ConfigMissing:
+		// Installed, with its configuration deleted: the package puts it
+		// back (issue #18).
+		plan, err = headscale.BuildReinstall(a.hsState.Distro)
+	case a.hsState.Present:
 		a.setStatus(ui.StatusInfo, "headscale is already installed")
 		return nil
+	default:
+		plan, err = headscale.BuildInstall(a.hsState.Distro, a.hsState.Repo)
 	}
-	plan, err := headscale.BuildInstall(a.hsState.Distro, a.hsState.Repo)
 	if err != nil {
 		a.setStatus(ui.StatusError, err.Error())
 		return nil

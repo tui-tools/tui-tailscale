@@ -197,6 +197,10 @@ type State struct {
 	// NotRunning reports that the client is installed but tailscaled did not
 	// answer: the unit is stopped or disabled.
 	NotRunning bool
+	// DaemonEnabled is what `systemctl is-enabled tailscaled` answered when
+	// tailscaled did not ("enabled", "disabled", "masked"…), read only then:
+	// it decides whether the start u previews also has to unmask the unit.
+	DaemonEnabled string
 	// PermissionDenied reports that the socket refused this user, and
 	// escalating did not help (no sudo, or a password it could not ask for).
 	PermissionDenied bool
@@ -216,6 +220,60 @@ type State struct {
 	// --list`), one per identity the client remembers. Not to be confused with
 	// the tool's join profiles, which are presets for j.
 	LoginProfiles []LoginProfile
+}
+
+// The answers of State.Daemon, which --check prints as tailscale.daemon.
+const (
+	DaemonRunning  = "running"
+	DaemonStopped  = "stopped"
+	DaemonDisabled = "disabled"
+	DaemonMasked   = "masked"
+	DaemonUnknown  = "unknown"
+)
+
+// Daemon says what tailscaled is doing, in one word: running (it answered,
+// even to refuse this user), stopped (installed, not running, enabled at
+// boot or unknown), disabled or masked (not running and not started at
+// boot), unknown (the read failed for another reason), or empty when the
+// client is not installed.
+func (s State) Daemon() string {
+	switch {
+	case !s.Installed:
+		return ""
+	case s.DaemonRunning || s.PermissionDenied:
+		return DaemonRunning
+	case !s.NotRunning:
+		return DaemonUnknown
+	}
+	switch s.DaemonEnabled {
+	case "disabled":
+		return DaemonDisabled
+	case "masked", "masked-runtime":
+		return DaemonMasked
+	}
+	return DaemonStopped
+}
+
+// DaemonStartable reports that tailscaled is installed and stopped, which u
+// fixes with a previewed `systemctl enable --now tailscaled`.
+func (s State) DaemonStartable() bool {
+	switch s.Daemon() {
+	case DaemonStopped, DaemonDisabled, DaemonMasked:
+		return true
+	}
+	return false
+}
+
+// NotRunningMessage is what the node screen says about a stopped tailscaled,
+// with the key that starts it.
+func NotRunningMessage(enabled string) string {
+	switch enabled {
+	case "disabled":
+		return "tailscaled is stopped and disabled · u starts it and enables it at boot, previewed"
+	case "masked", "masked-runtime":
+		return "tailscaled is masked · u unmasks, starts and enables it, previewed"
+	}
+	return "tailscaled is not running · u starts it (systemctl enable --now tailscaled), previewed"
 }
 
 // CurrentLoginProfile is the login profile in use, when the list was read.
@@ -305,6 +363,9 @@ const (
 	// ActionInstall installs the client from the distribution's package
 	// manager and Tailscale's own repository.
 	ActionInstall Action = "install"
+	// ActionStartDaemon starts tailscaled and enables it at boot. It has no
+	// key of its own: u offers it when tailscaled is stopped (issue #18).
+	ActionStartDaemon Action = "start-daemon"
 	// ActionSwitchProfile switches to another of tailscale's login profiles.
 	ActionSwitchProfile Action = "switch-profile"
 	// ActionSaveProfile writes a join profile to the tool's config file. It
@@ -346,7 +407,7 @@ var Actions = []ActionSpec{
 	{Action: ActionDown, Key: "d", Label: "down",
 		Help: "disconnect from the tailnet, keeping the login"},
 	{Action: ActionUp, Key: "u", Label: "up",
-		Help: "reconnect after a down"},
+		Help: "reconnect after a down; start tailscaled when it is stopped or disabled"},
 	{Action: ActionLogout, Key: "L", Label: "logout",
 		Help: "log this node out of the tailnet"},
 	{Action: ActionSwitchProfile, Key: "p", Label: "login profile",
@@ -392,6 +453,10 @@ type Request struct {
 
 	// Distro is the machine the install plan is for.
 	Distro Distro
+
+	// DaemonEnabled is `systemctl is-enabled tailscaled` for the start: a
+	// masked unit is unmasked first.
+	DaemonEnabled string
 
 	// LoginProfile is the id of the login profile to switch to.
 	LoginProfile string
@@ -512,6 +577,8 @@ func BuildCommand(req Request) (Plan, error) {
 		}, nil
 	case ActionInstall:
 		return buildInstall(req.Distro)
+	case ActionStartDaemon:
+		return buildStartDaemon(req), nil
 	case ActionSwitchProfile:
 		return buildSwitchProfile(req)
 	case ActionTrustCA:
@@ -520,6 +587,25 @@ func BuildCommand(req Request) (Plan, error) {
 		return Plan{}, fmt.Errorf("no action given")
 	}
 	return Plan{}, fmt.Errorf("unknown action %q", req.Action)
+}
+
+// buildStartDaemon starts tailscaled now and at boot, unmasking a masked unit
+// first: the state a partial reset or `systemctl disable --now` leaves.
+func buildStartDaemon(req Request) Plan {
+	plan := Plan{Action: ActionStartDaemon, Title: "Start tailscaled",
+		Body: "tailscaled is installed but not running, so the node cannot be read or " +
+			"joined. `systemctl enable --now` starts it and keeps it started at boot. " +
+			"The node keeps whatever login it had; a node that never joined comes up " +
+			"logged out, and j joins it."}
+	if req.DaemonEnabled == "masked" || req.DaemonEnabled == "masked-runtime" {
+		plan.Body += "\n\nThe unit is masked, which refuses every start: it is unmasked first."
+		plan.Steps = append(plan.Steps, runner.Command{
+			Argv: []string{"systemctl", "unmask", "tailscaled"}, Description: "Unmask tailscaled"})
+	}
+	plan.Steps = append(plan.Steps, runner.Command{
+		Argv:        []string{"systemctl", "enable", "--now", "tailscaled"},
+		Description: "Start tailscaled now and at boot"})
+	return plan
 }
 
 // buildJoin assembles the join: the key file when a pre-auth key was typed,

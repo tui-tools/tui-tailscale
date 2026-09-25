@@ -23,6 +23,7 @@ func TestDemoFlagCases(t *testing.T) {
 		{args: []string{"--demo"}, demo: true},
 		{args: []string{"--demo", "--check"}, demo: true},
 		{args: []string{"--demo=" + demoNodeOnly}, demo: true, demoCase: demoNodeOnly},
+		{args: []string{"--demo=" + demoPartialReset}, demo: true, demoCase: demoPartialReset},
 		{args: []string{"--demo=nope"}, fails: true},
 	}
 	for _, c := range cases {

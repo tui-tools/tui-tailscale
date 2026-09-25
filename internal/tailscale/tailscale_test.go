@@ -380,3 +380,54 @@ func TestStateHelpers(t *testing.T) {
 		t.Errorf("Name = %q", got)
 	}
 }
+
+// Issue #18: tailscaled in one word, for --check and for u.
+func TestDaemonWord(t *testing.T) {
+	cases := []struct {
+		state State
+		want  string
+		start bool
+	}{
+		{State{}, "", false},
+		{State{Installed: true, DaemonRunning: true}, DaemonRunning, false},
+		{State{Installed: true, PermissionDenied: true}, DaemonRunning, false},
+		{State{Installed: true, NotRunning: true, DaemonEnabled: "enabled"}, DaemonStopped, true},
+		{State{Installed: true, NotRunning: true}, DaemonStopped, true},
+		{State{Installed: true, NotRunning: true, DaemonEnabled: "disabled"}, DaemonDisabled, true},
+		{State{Installed: true, NotRunning: true, DaemonEnabled: "masked"}, DaemonMasked, true},
+		{State{Installed: true, Error: "boom"}, DaemonUnknown, false},
+	}
+	for _, c := range cases {
+		if got := c.state.Daemon(); got != c.want || c.state.DaemonStartable() != c.start {
+			t.Errorf("%+v: Daemon() = %q startable %v, want %q %v", c.state, got,
+				c.state.DaemonStartable(), c.want, c.start)
+		}
+	}
+}
+
+// The start u previews: enable --now, after an unmask when the unit is masked.
+func TestBuildStartDaemon(t *testing.T) {
+	plan, err := BuildCommand(Request{Action: ActionStartDaemon, DaemonEnabled: "disabled"})
+	if err != nil || len(plan.Steps) != 1 ||
+		plan.Steps[0].String() != "systemctl enable --now tailscaled" {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+	plan, _ = BuildCommand(Request{Action: ActionStartDaemon, DaemonEnabled: "masked"})
+	if len(plan.Steps) != 2 || plan.Steps[0].String() != "systemctl unmask tailscaled" {
+		t.Errorf("masked plan = %+v", plan.Steps)
+	}
+}
+
+func TestParseIsEnabled(t *testing.T) {
+	for out, want := range map[string]string{
+		"enabled\n": "enabled",
+		"disabled":  "disabled",
+		"masked\n":  "masked",
+		"":          "",
+		"Failed to get unit file state for tailscaled.service: No such file or directory": "",
+	} {
+		if got := ParseIsEnabled(out); got != want {
+			t.Errorf("ParseIsEnabled(%q) = %q, want %q", out, got, want)
+		}
+	}
+}

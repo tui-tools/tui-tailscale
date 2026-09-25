@@ -69,6 +69,9 @@ func (a *app) hsInstallLines() []string {
 // cpEmptyMessage is what a control-plane screen shows when it has no rows.
 func (a *app) cpEmptyMessage() string {
 	hs := a.hsState
+	if a.screen == screenDNS && hs.ControlPlane.ConfigMissing {
+		return headscale.ConfigMissingMessage
+	}
 	if a.screen == screenDNS {
 		reason := hs.ControlPlane.Error
 		if reason == "" {
@@ -137,6 +140,12 @@ func (a *app) readinessLine() string {
 			host+" · i installs headscale only to run a control plane here"), a.width)
 	}
 	r := headscale.ReadinessFor(a.hsState, time.Now())
+	if r.Next == headscale.NextFirstNode && r.PendingRegistrations == 0 &&
+		a.state.DaemonStartable() {
+		// j cannot join this host while its tailscaled is stopped.
+		r.NextStep = "no node yet · u on the node screen starts tailscaled, then j joins " +
+			"this host (or tailscale up --login-server=<server_url> on another machine)"
+	}
 	style := a.theme.Warn
 	label := "next step  "
 	if r.Next == headscale.NextReady {
@@ -157,6 +166,15 @@ func (a *app) controlPlanePanel() []string {
 	lines := []string{"control plane · " + orDash(cp.ConfigPath)}
 	if service := serviceLine(cp); service != "" {
 		lines = append(lines, service)
+	}
+	if cp.StateDirMissing {
+		// Harmless alone, and confusing when unexplained (issue #18).
+		lines = append(lines, "  state dir   "+headscale.HeadscaleStateDir+" is missing · the "+
+			"unit recreates it at the next start")
+	}
+	if cp.ConfigMissing {
+		return append(lines, "  the file is missing · i reinstalls the package, which puts "+
+			"back its example configuration, previewed")
 	}
 	if !cp.Readable {
 		reason := cp.Error
@@ -409,6 +427,9 @@ func (a *app) cpHelpKeys() []ui.KeyHint {
 	if !a.hsState.Present && !a.loading {
 		return []ui.KeyHint{{Key: "i", Desc: "install headscale"}}
 	}
+	if a.hsState.ControlPlane.ConfigMissing {
+		return []ui.KeyHint{{Key: "i", Desc: "reinstall headscale"}}
+	}
 	switch a.screen {
 	case screenUsers:
 		return []ui.KeyHint{{Key: "n", Desc: "new user"},
@@ -491,10 +512,20 @@ func wordsOrDash(items []string) string {
 // current screen, or "" when that step is not done from here: the readiness
 // line names the step, and the hint bar leads with its key (issue #12).
 func (a *app) nextKey() string {
+	if !a.screen.controlPlane() && a.state.DaemonStartable() {
+		// Nothing on the node's screens works until tailscaled runs.
+		return "u"
+	}
 	if !a.hsState.Present && a.screen.controlPlane() {
 		return "i"
 	}
 	if !a.hsState.Present {
+		return ""
+	}
+	if a.hsState.ControlPlane.ConfigMissing {
+		if a.screen.controlPlane() {
+			return "i"
+		}
 		return ""
 	}
 	r := headscale.ReadinessFor(a.hsState, time.Now())

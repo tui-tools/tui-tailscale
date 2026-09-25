@@ -95,7 +95,7 @@
     },
     {
       "key": "d / u",
-      "action": "Disconnect / reconnect"
+      "action": "Disconnect / reconnect (u starts a stopped or disabled tailscaled)"
     },
     {
       "key": "L",
@@ -107,7 +107,7 @@
     },
     {
       "key": "i",
-      "action": "Install tailscale (node screens) or headscale (control-plane screens) when absent"
+      "action": "Install tailscale or headscale when absent; reinstall headscale if config.yaml is gone"
     },
     {
       "key": "n",

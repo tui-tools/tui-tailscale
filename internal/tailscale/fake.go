@@ -47,6 +47,10 @@ type Fake struct {
 	// caTrusted records that the trust-CA step ran: from then on the demo's
 	// private login servers verify.
 	caTrusted bool
+	// daemonEnabled, when set, is a stopped tailscaled and what
+	// `systemctl is-enabled` answers for it ("disabled" after a partial
+	// reset): reads fail the way they do with no daemon, until u starts it.
+	daemonEnabled string
 }
 
 // DemoLoginServer is the control plane the demo node is joined to.
@@ -99,6 +103,22 @@ func (f *Fake) Reprobe() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.detected = !f.absent
+}
+
+// SetDaemonStopped stops the demo's tailscaled, the way `systemctl disable
+// --now tailscaled` (or a partial reset) leaves it: the client is installed,
+// reads fail, and `systemctl is-enabled` answers enabled. The node it had is
+// gone with it: once started, it comes up logged out (issue #18).
+func (f *Fake) SetDaemonStopped(enabled string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if enabled == "" {
+		enabled = "disabled"
+	}
+	f.daemonEnabled = enabled
+	f.state.Node = Node{BackendState: StateNeedsLogin, Version: f.state.Node.Version}
+	f.state.Prefs = Prefs{LoggedOut: true}
+	f.state.Peers, f.state.LoginProfiles = nil, nil
 }
 
 // CompleteLoginAfter makes a pending browser login complete by itself after n
@@ -193,6 +213,11 @@ func (f *Fake) Load(_ context.Context) (State, error) {
 	if !f.detected {
 		return State{Distro: f.state.Distro}, nil
 	}
+	if f.daemonEnabled != "" {
+		// No daemon behind the socket: what the real backend reports.
+		return State{Installed: true, Distro: f.state.Distro, NotRunning: true,
+			DaemonEnabled: f.daemonEnabled, Error: NotRunningMessage(f.daemonEnabled)}, nil
+	}
 	if f.refuse > 0 {
 		// The socket is not up yet: what the real backend reports when
 		// tailscaled refuses a read, as the first read after an install did.
@@ -242,7 +267,25 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 	case "update-ca-certificates", "update-ca-trust", "trust":
 		f.caTrusted = true
 		return "", nil
-	case "install", "rm", "sysctl", "systemctl":
+	case "systemctl":
+		// Starting a stopped tailscaled brings it up; the first read after
+		// it is refused, as a daemon that is still coming up refuses it.
+		if len(cmd.Argv) >= 3 && cmd.Argv[1] == "unmask" && f.daemonEnabled != "" {
+			f.daemonEnabled = "disabled"
+			return "Removed \"/etc/systemd/system/tailscaled.service\".", nil
+		}
+		if contains(cmd.Argv, "--now") && contains(cmd.Argv, "tailscaled") &&
+			f.daemonEnabled != "" {
+			if f.daemonEnabled == "masked" {
+				return "Failed to enable unit: Unit file /etc/systemd/system/tailscaled.service " +
+					"is masked.", fmt.Errorf("exit status 1")
+			}
+			f.daemonEnabled, f.refuse = "", 1
+			return "Created symlink /etc/systemd/system/multi-user.target.wants/tailscaled.service " +
+				"→ /usr/lib/systemd/system/tailscaled.service.", nil
+		}
+		return "", nil
+	case "install", "rm", "sysctl":
 		// The helpers change files the demo does not model.
 		return "", nil
 	case "tailscale":

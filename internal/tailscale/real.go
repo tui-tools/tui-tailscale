@@ -235,6 +235,12 @@ func (r *Real) Load(ctx context.Context) (State, error) {
 	out, err := r.read(ctx, run, "tailscale", "status", "--json")
 	if err != nil {
 		describeReadFailure(&state, out, err)
+		if state.NotRunning {
+			// Whether the unit starts at boot decides what u previews and
+			// what the screen says (issue #18).
+			state.DaemonEnabled = r.daemonEnabled(ctx)
+			state.Error = NotRunningMessage(state.DaemonEnabled)
+		}
 		return state, nil
 	}
 	status, err := ParseStatus(out)
@@ -264,6 +270,19 @@ func (r *Real) Load(ctx context.Context) (State, error) {
 	return state, nil
 }
 
+// daemonEnabled asks systemd whether tailscaled starts at boot. `is-enabled`
+// exits non-zero for "disabled" and "masked", which are answers, not
+// failures: the word it printed is kept either way, and nothing printed is an
+// unknown answer.
+func (r *Real) daemonEnabled(ctx context.Context) string {
+	run, err := r.runnerFor("systemctl")
+	if err != nil {
+		return ""
+	}
+	out, _ := run.Read(ctx, "systemctl", "is-enabled", "tailscaled")
+	return ParseIsEnabled(out)
+}
+
 // read runs a read as the invoking user first, which is enough on most
 // machines: tailscaled lets any local user read the node's status. Only when
 // the socket refuses (a hardened daemon, or a platform that checks) is the
@@ -286,8 +305,7 @@ func describeReadFailure(state *State, out string, err error) {
 	switch ClassifyReadError(out + " " + err.Error()) {
 	case ProblemNotRunning:
 		state.NotRunning = true
-		state.Error = "tailscaled is not running — start it with " +
-			"`sudo systemctl enable --now tailscaled`"
+		state.Error = NotRunningMessage("")
 	case ProblemPermission:
 		state.PermissionDenied = true
 		state.Error = "tailscaled refused this user — run with sudo, or make this user " +

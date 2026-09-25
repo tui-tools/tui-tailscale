@@ -154,6 +154,24 @@ func StatArgv(paths []string) []string {
 	return append([]string{"stat", "-c", statFormat, "--"}, paths...)
 }
 
+// MissingPaths reads the output of StatArgv for the paths stat reported as
+// not existing ("stat: cannot statx '/etc/headscale/config.yaml': No such
+// file or directory"; older coreutils say "cannot stat").
+func MissingPaths(out string, paths []string) map[string]bool {
+	missing := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "No such file or directory") {
+			continue
+		}
+		for _, p := range paths {
+			if strings.Contains(line, "'"+p+"'") || strings.Contains(line, "‘"+p+"’") {
+				missing[p] = true
+			}
+		}
+	}
+	return missing
+}
+
 // ParseStat reads the output of StatArgv. The lines `stat` prints for a path
 // that does not exist ("stat: cannot statx …") do not have the shape and are
 // skipped, which is what makes a missing path a non-event.

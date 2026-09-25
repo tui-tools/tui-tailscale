@@ -263,6 +263,10 @@ type app struct {
 	// and by loginWaitLimit otherwise.
 	loginWaiting   bool
 	loginWaitPolls int
+	// daemonStarted reports that u just started tailscaled: the first read
+	// that finds it answering replaces the status line with where the node
+	// stands (issue #18).
+	daemonStarted bool
 }
 
 // settleDelay is how long the one automatic re-read after a change waits.
@@ -546,6 +550,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.clampCursor()
 		a.followLogin()
 		a.replaceStaleLogin()
+		a.followDaemonStart()
 		if a.offerSave != nil && a.mode == modeBrowse {
 			answers := *a.offerSave
 			a.offerSave = nil
@@ -602,9 +607,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hsPlanRanMsg:
 		a.busy, a.running = false, ""
 		a.loading = true
-		if msg.err != nil {
+		switch {
+		case msg.err != nil:
 			a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
-		} else {
+		case msg.plan.Reinstall:
+			a.setStatus(ui.StatusOK, "headscale reinstalled · "+headscale.HeadscaleConfigPath+
+				" is back (the package's example) · S configures it and starts the unit")
+		default:
 			a.setStatus(ui.StatusOK, "headscale installed · S configures it and starts the unit")
 		}
 		return a, a.reloadAfterChange()
@@ -698,6 +707,11 @@ func (a *app) planResult(msg planRanMsg) {
 		// The package manager's first line of output ("Get:1 …") says
 		// nothing about the result.
 		a.setStatus(ui.StatusOK, "tailscale installed · j joins a tailnet")
+	case msg.plan.Action == tailscale.ActionStartDaemon:
+		// The read that follows says where the node stands; until then,
+		// what was done.
+		a.setStatus(ui.StatusOK, "tailscaled started and enabled at boot · reading the node…")
+		a.daemonStarted = true
 	default:
 		if summary := routingSummary(msg.plan); summary != "" {
 			a.setStatus(ui.StatusOK, summary)
@@ -1026,6 +1040,13 @@ func (a *app) startAction(action tailscale.Action) {
 		}
 		a.openPlan(tailscale.BuildCommand(tailscale.Request{
 			Action: action, Distro: a.state.Distro}))
+		return
+	}
+	if action == tailscale.ActionUp && a.state.DaemonStartable() {
+		// u on a stopped tailscaled starts it (issue #18): the fix the
+		// screen names, previewed, instead of a command to type elsewhere.
+		a.openPlan(tailscale.BuildCommand(tailscale.Request{
+			Action: tailscale.ActionStartDaemon, DaemonEnabled: a.state.DaemonEnabled}))
 		return
 	}
 	if !a.nodeReachable() {
@@ -1540,6 +1561,26 @@ func (a *app) replaceStaleLogin() {
 	}
 	a.setStatus(ui.StatusOK, joinedLine(n))
 	a.loginCompleted()
+}
+
+// followDaemonStart says where the node stands once the tailscaled u started
+// answers: logged out (j joins), or the state it came back in. While the
+// settling re-read still finds it down, the line is left to the settle logic.
+func (a *app) followDaemonStart() {
+	if !a.daemonStarted || !a.state.DaemonRunning {
+		if a.daemonStarted && !a.settling {
+			// The settle retry was spent and it still does not answer.
+			a.daemonStarted = false
+		}
+		return
+	}
+	a.daemonStarted = false
+	n := a.state.Node
+	if !a.state.LoggedIn() && n.AuthURL == "" {
+		a.setStatus(ui.StatusOK, "tailscaled is running · logged out · j joins a tailnet")
+		return
+	}
+	a.setStatusf(ui.StatusOK, "tailscaled is running · %s", stateLine(n))
 }
 
 // joinedLine says who joined which tailnet, for the status line that replaces

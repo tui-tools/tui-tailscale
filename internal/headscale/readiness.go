@@ -223,6 +223,8 @@ func serverReady(cp ControlPlane) bool {
 // serverStep says what S has to fix.
 func serverStep(cp ControlPlane) string {
 	switch {
+	case cp.ConfigMissing:
+		return ConfigMissingMessage
 	case !cp.Readable:
 		reason := cp.Error
 		if reason == "" {

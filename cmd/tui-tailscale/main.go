@@ -52,10 +52,14 @@ const (
 	// demoNodeOnly is a machine that is only a node: no headscale here, the
 	// node joined to a control plane elsewhere (issue #20).
 	demoNodeOnly = "node-only"
+	// demoPartialReset is a host after a partial reset: tailscale installed
+	// with tailscaled stopped and disabled, headscale installed with its
+	// config.yaml and state directory deleted (issue #18).
+	demoPartialReset = "partial-reset"
 )
 
 // demoCases lists the accepted --demo values, for the usage and the error.
-var demoCases = []string{demoNodeOnly}
+var demoCases = []string{demoNodeOnly, demoPartialReset}
 
 // demoFlag is --demo: bare, it runs the sample tailnet; --demo=<case> runs
 // one of demoCases instead.
@@ -121,7 +125,8 @@ func parseFlags(args []string, out *os.File) (options, error) {
 	fs.Var(demoFlag{on: &opts.demo, name: &opts.demoCase}, "demo",
 		"run against a fake node and control plane on a sample tailnet, without reading this "+
 			"host; --demo="+demoNodeOnly+" is a machine that is only a node of a "+
-			"control plane elsewhere")
+			"control plane elsewhere, --demo="+demoPartialReset+" one with tailscaled "+
+			"stopped and headscale's configuration deleted")
 	fs.BoolVar(&opts.check, "check", false,
 		"read the node and the control plane once, print the summary as JSON and exit "+
 			"(no UI, nothing is changed, no address, name or URL of this host)")
@@ -256,6 +261,9 @@ func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 		// the login expired (issue #20).
 		fake.SetConfirmPhases(tailscale.StateNeedsLogin, tailscale.StateNoState,
 			tailscale.StateStarting)
+		if opts.demoCase == demoPartialReset {
+			fake.SetDaemonStopped("disabled")
+		}
 		return fake, nil
 	}
 	return tailscale.New(cfg.SudoPrefix())
@@ -267,8 +275,11 @@ func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 func pickControlPlane(cfg config.Config, opts options) headscale.Backend {
 	if opts.demo {
 		fake := headscale.NewFake()
-		if opts.demoCase == demoNodeOnly {
+		switch opts.demoCase {
+		case demoNodeOnly:
 			fake.SetAbsent()
+		case demoPartialReset:
+			fake.SetConfigMissing()
 		}
 		return fake
 	}

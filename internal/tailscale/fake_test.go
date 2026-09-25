@@ -205,3 +205,27 @@ func TestFakeConfirmedLoginPhases(t *testing.T) {
 		t.Errorf("states = %v, want %v", got, want)
 	}
 }
+
+// A stopped, disabled tailscaled reads like the real one, and the previewed
+// start brings it up logged out (issue #18).
+func TestFakeStoppedDaemonStarts(t *testing.T) {
+	f := NewFake()
+	f.SetDaemonStopped("disabled")
+	s, _ := f.Load(context.Background())
+	if !s.Installed || s.DaemonRunning || s.Daemon() != DaemonDisabled ||
+		!strings.Contains(s.Error, "u starts it") {
+		t.Fatalf("stopped = %+v", s)
+	}
+	if _, err := runPlan(t, f, Request{Action: ActionStartDaemon,
+		DaemonEnabled: s.DaemonEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	// The first read after the start is refused, as a daemon coming up does.
+	if s, _ = f.Load(context.Background()); s.DaemonRunning {
+		t.Errorf("the first read should be refused: %+v", s)
+	}
+	s, _ = f.Load(context.Background())
+	if !s.DaemonRunning || s.LoggedIn() || s.Node.BackendState != StateNeedsLogin {
+		t.Errorf("after the start = %+v", s)
+	}
+}

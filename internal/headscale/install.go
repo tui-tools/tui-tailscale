@@ -84,6 +84,9 @@ type Plan struct {
 	// repository key. A mismatch stops the plan before anything trusts it.
 	Verify      int
 	Fingerprint string
+	// Reinstall marks the plan that restores a deleted configuration, whose
+	// result the screens word differently from a first install.
+	Reinstall bool
 }
 
 // CheckStep is called with each step's output as the plan runs; it stops the
@@ -170,6 +173,51 @@ func BuildInstall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
 		"release, signed and attested like every tool. The package ships the binary, a "+
 		"hardened unit and an example /etc/headscale/config.yaml, and does not start the "+
 		"unit: S configures it and ends with the enable.")
+	plan.Body = strings.Join(body, "\n\n")
+	return plan, nil
+}
+
+// BuildReinstall assembles the reinstall that puts back a deleted
+// configuration (issue #18): the package ships /etc/headscale/config.yaml as
+// a configuration file, which each package manager restores when the package
+// is reinstalled and the file is gone. dpkg does it only when asked
+// (--force-confmiss); rpm and pacman do it on their own. The repository is
+// already configured on a host where the package is installed.
+func BuildReinstall(d pkgmgr.Distro) (Plan, error) {
+	manager := ManagerOf(d)
+	plan := Plan{Title: "Reinstall headscale", Reinstall: true}
+	body := []string{"headscale is installed, but " + HeadscaleConfigPath + " is gone, so " +
+		"it cannot start and S has nothing to edit. Reinstalling the package puts back " +
+		"the example configuration it ships (and " + HeadscaleStateDir + " when that is " +
+		"gone too). A database that is still there is not touched."}
+	switch manager {
+	case pkgmgr.ManagerAPT:
+		plan.Steps = []runner.Command{{Argv: []string{"apt-get", "install", "--reinstall", "-y",
+			"-o", "Dpkg::Options::=--force-confmiss", PackageName},
+			Description: "Reinstall headscale, restoring its missing configuration"}}
+		body = append(body, "dpkg restores a deleted configuration file only when told to: "+
+			"that is --force-confmiss. A configuration file that is still there is kept.")
+	case pkgmgr.ManagerDNF:
+		plan.Steps = []runner.Command{{Argv: []string{"dnf", "reinstall", "-y", PackageName},
+			Description: "Reinstall headscale, restoring its missing configuration"}}
+	case pkgmgr.ManagerPacman:
+		argv := []string{"pacman", "-S", "--noconfirm", "tui-tools/" + PackageName}
+		if !d.Omarchy() {
+			// Arch supports no partial upgrade, as for the install.
+			argv = []string{"pacman", "-Syu", "--noconfirm", "tui-tools/" + PackageName}
+		}
+		plan.Steps = []runner.Command{{Argv: argv,
+			Description: "Reinstall headscale, restoring its missing configuration"}}
+	default:
+		name := d.String()
+		if name == "" {
+			name = "this distribution"
+		}
+		return Plan{}, fmt.Errorf("no reinstall plan for %s; reinstall %s with the package "+
+			"manager to restore %s", name, PackageName, HeadscaleConfigPath)
+	}
+	body = append(body, "The restored file is the package's example, with placeholders: S "+
+		"configures it next, and ends with the start.")
 	plan.Body = strings.Join(body, "\n\n")
 	return plan, nil
 }

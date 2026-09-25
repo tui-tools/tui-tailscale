@@ -547,7 +547,11 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 			if spec.Action == tailscale.ActionInstall {
 				continue
 			}
-			actions = append(actions, ui.KeyHint{Key: spec.Key, Desc: spec.Label})
+			desc := spec.Label
+			if spec.Action == tailscale.ActionUp && a.state.DaemonStartable() {
+				desc = "start tailscaled"
+			}
+			actions = append(actions, ui.KeyHint{Key: spec.Key, Desc: desc})
 		}
 		hints = append(hints, a.emphasizeNext(actions)...)
 	}
@@ -575,7 +579,7 @@ func helpKeys() []ui.KeyHint {
 	return append(hints,
 		ui.KeyHint{Key: "", Desc: ""},
 		ui.KeyHint{Key: "headscale", Desc: "on the users, nodes and preauth keys screens:"},
-		ui.KeyHint{Key: "i", Desc: "install headscale from the tui-tools repository (when absent)"},
+		ui.KeyHint{Key: "i", Desc: "install headscale (tui-tools repository); reinstall it if config.yaml is gone"},
 		ui.KeyHint{Key: "n", Desc: "create a user (users) / a pre-auth key (preauth keys)"},
 		ui.KeyHint{Key: "S / O", Desc: "server settings / identity provider (users): a diff of"},
 		ui.KeyHint{Key: "", Desc: "config.yaml, then a restart (or an enable)"},
