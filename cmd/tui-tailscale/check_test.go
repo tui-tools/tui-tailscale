@@ -84,7 +84,7 @@ func TestRunCheckNotInstalled(t *testing.T) {
 		t.Errorf("install = %+v", report.Install)
 	}
 	if got := strings.Join(report.Install.Commands, "\n"); !strings.Contains(got,
-		"sudo apt-get install -y tailscale") {
+		"sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y tailscale") {
 		t.Errorf("commands = %s", got)
 	}
 	if report.Compat == nil {

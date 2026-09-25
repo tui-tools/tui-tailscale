@@ -474,6 +474,11 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 		}
 		f.reinstall()
 		return "", nil
+	case len(argv) >= 1 && (argv[0] == "apt-get" || argv[0] == "dnf" || argv[0] == "pacman") &&
+		(hasArg(argv, FirewallTool) || hasArg(argv, "tui-tools/"+FirewallTool)):
+		// f's install puts tui-firewall on the machine (issue #25).
+		f.state.Firewall.Launchable = true
+		return "", nil
 	case len(argv) >= 1 && isInstallStep(argv[0]):
 		// The companion install changes files and packages the demo does not
 		// model.
@@ -536,6 +541,14 @@ func (f *Fake) SetFirewall(fw Firewall) {
 	f.state.Firewall = fw
 }
 
+// SetFirewallInstalled puts tui-firewall on the demo host or takes it off, so
+// a test can press f on a host without it.
+func (f *Fake) SetFirewallInstalled(installed bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.Firewall.Launchable = installed
+}
+
 // LaunchFirewall records the hand-over and starts nothing: the demo reaches
 // every key, and handing the terminal to a tool that may not be installed is
 // not something a demo may do.
@@ -581,6 +594,11 @@ func (d *demoProcess) String() string { return d.name }
 // DemoAuthID is the registration the demo has waiting: a laptop that ran
 // `tailscale up --login-server` and has not logged in yet.
 const DemoAuthID = "hskey-authreq-DemoLaptopWaiting0001"
+
+// DemoRefusedAuthID is the registration whose browser login the demo's
+// identity provider policy refused: still in headscale's cache, and not
+// something R may finish.
+const DemoRefusedAuthID = "hskey-authreq-DemoRefusedByIdP0002"
 
 // SetNodes replaces the registered nodes, so a test can start from a control
 // plane with none.
@@ -814,8 +832,14 @@ func demoState() State {
 				ApprovedRoutes:  []string{"192.0.2.0/24"},
 				SubnetRoutes:    []string{"192.0.2.0/24"}},
 		},
-		Registrations: []Registration{{AuthID: DemoAuthID, Seen: now.Add(-90 * time.Second)}},
-		Firewall:      DemoFirewall(),
+		Registrations: []Registration{
+			{AuthID: DemoAuthID, Seen: now.Add(-90 * time.Second)},
+			// A browser login from outside example.com, turned away by
+			// allowed_domains: R refuses it (issue #26).
+			{AuthID: DemoRefusedAuthID, Seen: now.Add(-4 * time.Minute), AtIdP: true,
+				Refused: true, RefusedBy: "allowed_domains"},
+		},
+		Firewall: DemoFirewall(),
 		PreAuthKeys: []PreAuthKey{
 			{ID: "1", User: "ops@example.com", KeyPrefix: "0123456789", Reusable: true,
 				Ephemeral: false, Used: true,

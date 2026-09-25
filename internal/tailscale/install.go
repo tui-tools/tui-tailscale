@@ -141,8 +141,12 @@ func buildInstall(d Distro) (Plan, error) {
 				base + ".noarmor.gpg"}, Description: "Add Tailscale's signing key"},
 			{Argv: []string{"curl", "-fsSL", "-o", "/etc/apt/sources.list.d/tailscale.list",
 				base + ".tailscale-keyring.list"}, Description: "Add Tailscale's apt repository"},
-			{Argv: []string{"apt-get", "update"}, Description: "Refresh the package lists"},
-			{Argv: []string{"apt-get", "install", "-y", "tailscale"}, Description: "Install tailscale"},
+			// Both apt steps run non-interactively (pkgmgr.APTEnv): needrestart
+			// must not wait on a prompt behind the TUI (issue #23).
+			{Argv: []string{"apt-get", "update"}, Env: pkgmgr.APTEnv(),
+				Description: "Refresh the package lists"},
+			{Argv: []string{"apt-get", "install", "-y", "tailscale"}, Env: pkgmgr.APTEnv(),
+				Description: "Install tailscale"},
 			enable,
 		}
 	case pkgmgr.ManagerDNF:
@@ -209,6 +213,12 @@ func InstallInstructions(d Distro) []string {
 	}
 	lines := make([]string, 0, len(plan.Steps))
 	for _, step := range plan.Steps {
+		if len(step.Env) > 0 {
+			// sudo resets the environment: the variables go through env, as
+			// the runner passes them.
+			lines = append(lines, "sudo env "+step.String())
+			continue
+		}
 		lines = append(lines, "sudo "+step.String())
 	}
 	return lines

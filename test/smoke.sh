@@ -147,7 +147,7 @@ else
         "pkgs\\.tailscale\\.com/stable/[a-z]+/${codename}\\.tailscale-keyring\\.list"
       check "check gives the apt install" \
         "$bin --check" \
-        'sudo apt-get install -y tailscale'
+        'sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y tailscale'
       ;;
     dnf)
       check "check gives the dnf repository file" \
@@ -256,7 +256,19 @@ check "check --demo counts the dns section" \
 
 check "check --demo counts the node waiting to register" \
   "$bin --demo --check" \
-  '"pendingRegistrations": 1'
+  '"pendingRegistrations": 2'
+
+# 1.0.1: a registration the identity provider's policy refused is counted
+# apart, and R does not offer it (issue #26).
+check "check --demo counts the registration the IdP refused" \
+  "$bin --demo --check" \
+  '"refusedRegistrations": 1'
+
+# 1.0.1: where the relays come from, and the note when they are Tailscale's
+# public DERP servers (issue #27).
+check "check --demo says the relays are Tailscale's public ones" \
+  "$bin --demo --check" \
+  '"relays": "tailscale-public"'
 
 check "check --demo prints no registration id" \
   "$bin --demo --check | grep -c 'hskey-' || true" \

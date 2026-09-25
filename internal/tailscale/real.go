@@ -22,8 +22,10 @@ var searchPaths = map[string][]string{
 	"sysctl":  {"/usr/sbin/sysctl", "/sbin/sysctl", "/usr/bin/sysctl"},
 	// The companion install: curl fetches Tailscale's repository files, the
 	// package manager installs, systemctl starts the daemon.
-	"curl":      {"/usr/bin/curl", "/bin/curl"},
-	"apt-get":   {"/usr/bin/apt-get", "/bin/apt-get"},
+	"curl":    {"/usr/bin/curl", "/bin/curl"},
+	"apt-get": {"/usr/bin/apt-get", "/bin/apt-get"},
+	// env runs apt-get with the non-interactive environment (install.go).
+	"env":       {"/usr/bin/env", "/bin/env"},
 	"dnf":       {"/usr/bin/dnf", "/bin/dnf"},
 	"pacman":    {"/usr/bin/pacman", "/bin/pacman"},
 	"systemctl": {"/usr/bin/systemctl", "/bin/systemctl"},
@@ -194,7 +196,12 @@ func (r *Real) Preview(cmd runner.Command) string {
 		// The binary is missing (curl before an install, say); show the
 		// honest argv with the prefix it would get.
 		if len(r.sudo) > 0 && escalates(cmd) {
-			return strings.Join(r.sudo, " ") + " " + cmd.String()
+			if len(cmd.Env) > 0 {
+				// As the kit's runner renders it: sudo resets the
+				// environment, so the variables go through env.
+				return runner.Join(r.sudo) + " env " + cmd.String()
+			}
+			return runner.Join(r.sudo) + " " + cmd.String()
 		}
 		return cmd.String()
 	}

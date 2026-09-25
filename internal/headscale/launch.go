@@ -79,6 +79,12 @@ func (p *process) String() string { return strings.Join(p.cmd.Args, " ") }
 // none of them changes anything.
 func (r *Real) readFirewall(ctx context.Context) Firewall {
 	launchable := runner.Available(FirewallTool, searchPaths[FirewallTool]...)
+	if launchable {
+		// Installed since it was last looked for: the miss the runner cache
+		// remembers is stale, and the read below must go through it rather
+		// than fall back to nftables (issue #25).
+		r.forgetMiss(FirewallTool)
+	}
 	reads := []struct {
 		bin   string
 		argv  []string
@@ -86,7 +92,7 @@ func (r *Real) readFirewall(ctx context.Context) Firewall {
 	}{
 		{FirewallTool, []string{FirewallTool, "--check"}, ParseTuiFirewallCheck},
 		{"nft", []string{"nft", "-j", "list", "ruleset"}, ParseNftRuleset},
-		{"iptables", []string{"iptables", "-S", "INPUT"}, ParseIptablesInput},
+		{"iptables", []string{"iptables", "-S"}, ParseIptablesInput},
 	}
 	var lastErr string
 	for _, read := range reads {

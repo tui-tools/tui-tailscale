@@ -124,3 +124,96 @@ func TestControlPortFollowsTheBind(t *testing.T) {
 		t.Errorf("443 is open: %+v", p)
 	}
 }
+
+// ufw on iptables-nft, as `nft -j list ruleset` and `iptables -S` print it on
+// an Ubuntu 26.04 lab guest with `ufw allow 443/tcp` and `ufw allow
+// 41641/udp` (issue #24): an INPUT chain with a drop policy and nothing but
+// jumps, the "not local" guard, and the accepts two chains down in
+// ufw-user-input. Both reads follow the jumps to the same answer.
+func TestPortsFollowUfwJumps(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		file  string
+		parse func(string) (Firewall, bool)
+	}{
+		{"nft", "firewall-ufw-nft.json", ParseNftRuleset},
+		{"iptables", "firewall-ufw-iptables.txt", ParseIptablesInput},
+	} {
+		fw, ok := tc.parse(readFixture(t, tc.file))
+		if !ok {
+			t.Fatalf("%s: not parsed", tc.name)
+		}
+		for _, want := range []struct {
+			proto string
+			port  int
+			state PortState
+		}{
+			{"tcp", 443, PortOpen}, {"udp", NodePort, PortOpen}, {"tcp", 22, PortOpen},
+			{"tcp", 19443, PortClosed}, {"udp", 3478, PortClosed},
+		} {
+			if got := fw.Check(want.proto, want.port); got != want.state {
+				t.Errorf("%s: %d/%s = %s, want %s", tc.name, want.port, want.proto, got, want.state)
+			}
+		}
+	}
+}
+
+// firewalld on Fedora 44, as `nft -j list ruleset` prints it with 443/tcp and
+// 41641/udp added to the public zone: the zone is reached by a goto from the
+// input chain, and the ports are accepted in filter_IN_public_allow.
+func TestPortsFollowFirewalldGotos(t *testing.T) {
+	fw, ok := ParseNftRuleset(readFixture(t, "firewall-firewalld-nft.json"))
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	for _, want := range []struct {
+		proto string
+		port  int
+		state PortState
+	}{
+		{"tcp", 443, PortOpen}, {"udp", NodePort, PortOpen}, {"tcp", 22, PortOpen},
+		{"tcp", 8080, PortClosed},
+	} {
+		if got := fw.Check(want.proto, want.port); got != want.state {
+			t.Errorf("%d/%s = %s, want %s", want.port, want.proto, got, want.state)
+		}
+	}
+}
+
+// A jump into a chain that is not in what was read may end anywhere: the
+// answer is unknown, never the policy after it.
+func TestPortsUnfollowableJumpIsUnknown(t *testing.T) {
+	// The INPUT-only listing older releases read: the chains are not in it.
+	only, _ := ParseIptablesInput("-P INPUT DROP\n-A INPUT -j ufw-before-input\n")
+	if got := only.Check("tcp", 443); got != PortUnknown {
+		t.Errorf("iptables -S INPUT with a jump: %s", got)
+	}
+	// A log target is not a jump: the policy still decides.
+	logged, _ := ParseIptablesInput("-P INPUT DROP\n-A INPUT -j LOG --log-prefix x\n")
+	if got := logged.Check("tcp", 443); got != PortClosed {
+		t.Errorf("a LOG rule: %s", got)
+	}
+	missing, _ := ParseNftRuleset(`{"nftables": [{"chain": {"family": "ip", "table": "filter",
+		"name": "INPUT", "hook": "input", "type": "filter", "policy": "drop"}},
+		{"rule": {"family": "ip", "table": "filter", "chain": "INPUT",
+		"expr": [{"jump": {"target": "elsewhere"}}]}}]}`)
+	if got := missing.Check("tcp", 443); got != PortUnknown {
+		t.Errorf("nft jump to a missing chain: %s", got)
+	}
+	// A goto that falls off its chain ends the calling one too; a return
+	// goes back to the rule after the jump.
+	gotoFw, _ := ParseIptablesInput("-P INPUT ACCEPT\n-N a\n-N b\n" +
+		"-A INPUT -j a\n-A INPUT -p tcp --dport 443 -j ACCEPT\n-A INPUT -j DROP\n" +
+		"-A a -p tcp --dport 22 -j RETURN\n-A a -g b\n-A a -j DROP\n" +
+		"-A b -p tcp --dport 80 -j ACCEPT\n")
+	for port, want := range map[int]PortState{22: PortClosed, 80: PortOpen, 443: PortOpen, 8080: PortClosed} {
+		if got := gotoFw.Check("tcp", port); got != want {
+			t.Errorf("goto/return: %d = %s, want %s", port, got, want)
+		}
+	}
+	// Chains that jump to each other forever stop at the depth limit.
+	loop, _ := ParseIptablesInput("-P INPUT DROP\n-N a\n-A INPUT -j a\n-A a -j a\n")
+	if got := loop.Check("tcp", 443); got != PortUnknown {
+		t.Errorf("a jump loop: %s", got)
+	}
+}

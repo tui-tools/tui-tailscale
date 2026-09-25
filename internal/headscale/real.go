@@ -41,7 +41,7 @@ var searchPaths = map[string][]string{
 	"journalctl": {"/usr/bin/journalctl", "/bin/journalctl"},
 	// The readiness ports step reads the host firewall, never changes it:
 	// tui-firewall's --check when the family's firewall tool is here, the
-	// nftables rule set or the iptables INPUT chain otherwise. tui-firewall is
+	// nftables rule set or the iptables filter table otherwise. tui-firewall is
 	// also what f hands the terminal to.
 	"tui-firewall": {"/usr/bin/tui-firewall", "/usr/local/bin/tui-firewall"},
 	"nft":          {"/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft"},
@@ -219,6 +219,14 @@ func (r *Real) Reprobe() {
 	r.missing = map[string]error{}
 }
 
+// forgetMiss drops a binary's remembered miss, so the next use resolves it
+// again.
+func (r *Real) forgetMiss(bin string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.missing, bin)
+}
+
 // Preview renders the command the way its binary's runner would, so the
 // privilege prefix in the dialog is the real one.
 func (r *Real) Preview(cmd runner.Command) string {
@@ -230,11 +238,21 @@ func (r *Real) Preview(cmd runner.Command) string {
 		// The binary is missing (headscale before its install, say); show the
 		// honest argv with the prefix it would get.
 		if len(r.sudo) > 0 && escalates(cmd) {
-			return strings.Join(r.sudo, " ") + " " + cmd.String()
+			return escalatedPreview(r.sudo, cmd)
 		}
 		return cmd.String()
 	}
 	return run.Preview(cmd)
+}
+
+// escalatedPreview is a command behind the escalation prefix, the way the
+// kit's runner renders it: its variables through env, since sudo resets the
+// environment.
+func escalatedPreview(sudo []string, cmd runner.Command) string {
+	if len(cmd.Env) > 0 {
+		return runner.Join(sudo) + " env " + cmd.String()
+	}
+	return runner.Join(sudo) + " " + cmd.String()
 }
 
 // Run executes a previewed command through its binary's runner.

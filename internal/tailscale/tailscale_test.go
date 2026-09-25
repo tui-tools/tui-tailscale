@@ -292,8 +292,8 @@ func TestInstallPlans(t *testing.T) {
 				"https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg",
 			"curl -fsSL -o /etc/apt/sources.list.d/tailscale.list " +
 				"https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list",
-			"apt-get update",
-			"apt-get install -y tailscale",
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update",
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y tailscale",
 			"systemctl enable --now tailscaled",
 		}},
 		{"debian", debian, []string{
@@ -301,8 +301,8 @@ func TestInstallPlans(t *testing.T) {
 				"https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg",
 			"curl -fsSL -o /etc/apt/sources.list.d/tailscale.list " +
 				"https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list",
-			"apt-get update",
-			"apt-get install -y tailscale",
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update",
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y tailscale",
 			"systemctl enable --now tailscaled",
 		}},
 		{"mint uses ubuntu's codename", mint, []string{
@@ -310,8 +310,8 @@ func TestInstallPlans(t *testing.T) {
 				"https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg",
 			"curl -fsSL -o /etc/apt/sources.list.d/tailscale.list " +
 				"https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list",
-			"apt-get update",
-			"apt-get install -y tailscale",
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update",
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y tailscale",
 			"systemctl enable --now tailscaled",
 		}},
 		{"fedora", fedora, []string{
