@@ -211,6 +211,21 @@ type State struct {
 	PrefsError string
 
 	Peers []Peer
+
+	// LoginProfiles are tailscale's own login profiles (`tailscale switch
+	// --list`), one per identity the client remembers. Not to be confused with
+	// the tool's join profiles, which are presets for j.
+	LoginProfiles []LoginProfile
+}
+
+// CurrentLoginProfile is the login profile in use, when the list was read.
+func (s State) CurrentLoginProfile() (LoginProfile, bool) {
+	for _, p := range s.LoginProfiles {
+		if p.Current {
+			return p, true
+		}
+	}
+	return LoginProfile{}, false
 }
 
 // LoggedIn reports whether the node holds a login it would keep across a
@@ -290,6 +305,11 @@ const (
 	// ActionInstall installs the client from the distribution's package
 	// manager and Tailscale's own repository.
 	ActionInstall Action = "install"
+	// ActionSwitchProfile switches to another of tailscale's login profiles.
+	ActionSwitchProfile Action = "switch-profile"
+	// ActionSaveProfile writes a join profile to the tool's config file. It
+	// has no key of its own: it is offered after a join.
+	ActionSaveProfile Action = "save-profile"
 )
 
 // ActionSpec describes one action for the key map and the help screen, so the
@@ -325,6 +345,8 @@ var Actions = []ActionSpec{
 		Help: "reconnect after a down"},
 	{Action: ActionLogout, Key: "L", Label: "logout",
 		Help: "log this node out of the tailnet"},
+	{Action: ActionSwitchProfile, Key: "p", Label: "login profile",
+		Help: "switch between tailscale's own login profiles (when it remembers more than one)"},
 	{Action: ActionInstall, Key: "i", Label: "install",
 		Help: "install tailscale from the package manager (when it is absent)"},
 }
@@ -366,6 +388,9 @@ type Request struct {
 
 	// Distro is the machine the install plan is for.
 	Distro Distro
+
+	// LoginProfile is the id of the login profile to switch to.
+	LoginProfile string
 }
 
 // Plan is what one confirm dialog shows and one confirmation runs: a few
@@ -478,6 +503,8 @@ func BuildCommand(req Request) (Plan, error) {
 		}, nil
 	case ActionInstall:
 		return buildInstall(req.Distro)
+	case ActionSwitchProfile:
+		return buildSwitchProfile(req)
 	case "":
 		return Plan{}, fmt.Errorf("no action given")
 	}

@@ -34,8 +34,12 @@ func TestCompletedLoginReplacesTheURL(t *testing.T) {
 	if !strings.HasPrefix(a.status, "joined headscale.example.com as user@example.com") {
 		t.Errorf("status = %q, want who joined", a.status)
 	}
-	if a.mode != modeBrowse {
-		t.Errorf("mode = %v: the login notice should close once the login completed", a.mode)
+	if a.mode == modeNotice {
+		t.Errorf("the login notice should close once the login completed")
+	}
+	// The browser join's answers are offered as a join profile now.
+	if a.mode != modeInput || a.inputPurpose != inputSaveProfile {
+		t.Errorf("mode = %v / %v, want the offer to save a join profile", a.mode, a.inputPurpose)
 	}
 	if a.state.Node.AuthURL != "" || a.state.Node.BackendState != tailscale.StateRunning {
 		t.Errorf("node = %+v", a.state.Node)

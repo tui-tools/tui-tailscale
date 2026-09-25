@@ -58,8 +58,14 @@ func (f *Fake) Name() string { return "demo" }
 // Describe is the one-line summary shown in the header.
 func (f *Fake) Describe() string { return "tailscale via sudo -n  ·  demo (no changes are applied)" }
 
-// Preview renders the command the way the real backend would.
-func (f *Fake) Preview(cmd runner.Command) string { return f.run.Preview(cmd) }
+// Preview renders the command the way the real backend would: escalated,
+// except the commands the real backend runs as the invoking user.
+func (f *Fake) Preview(cmd runner.Command) string {
+	if !escalates(cmd) {
+		return cmd.String()
+	}
+	return f.run.Preview(cmd)
+}
 
 // Run applies a confirmed command to the in-memory state.
 func (f *Fake) Run(ctx context.Context, cmd runner.Command) (string, error) {
@@ -148,6 +154,7 @@ func (f *Fake) Load(_ context.Context) (State, error) {
 	s.Peers = append([]Peer(nil), f.state.Peers...)
 	s.Node.IPs = append([]string(nil), f.state.Node.IPs...)
 	s.Prefs.AdvertiseRoutes = append([]string(nil), f.state.Prefs.AdvertiseRoutes...)
+	s.LoginProfiles = append([]LoginProfile(nil), f.state.LoginProfiles...)
 	for i := range s.Peers {
 		s.Peers[i].ExitNode = f.usesExitNode(s.Peers[i])
 	}
@@ -206,6 +213,8 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 		f.state.Node.BackendState = StateStopped
 		f.state.Node.Online = false
 		return "", nil
+	case "switch":
+		return f.applySwitch(cmd.Argv[2:])
 	case "logout":
 		f.state.Prefs.LoggedOut = true
 		f.state.Prefs.WantRunning = false
@@ -214,6 +223,24 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 		return "", nil
 	}
 	return "", fmt.Errorf("tailscale: unknown subcommand %q", cmd.Argv[1])
+}
+
+// applySwitch applies `tailscale switch <id>`: the demo's two login profiles
+// are the same account on the same control plane, so only the mark moves.
+func (f *Fake) applySwitch(args []string) (string, error) {
+	if len(args) != 1 {
+		return "", fmt.Errorf("usage: tailscale switch <id>")
+	}
+	found := false
+	for i := range f.state.LoginProfiles {
+		p := &f.state.LoginProfiles[i]
+		p.Current = p.ID == args[0]
+		found = found || p.Current
+	}
+	if !found {
+		return "", fmt.Errorf("profile %q not found", args[0])
+	}
+	return "Switching to profile " + args[0], nil
 }
 
 // applySet applies `tailscale set --flag=value`.
@@ -345,6 +372,13 @@ func demoState() State {
 			WantRunning: true,
 		},
 		PrefsRead: true,
+		// Two login profiles: the tailnet the demo node is on, and a second
+		// login it remembers from an earlier control plane.
+		LoginProfiles: []LoginProfile{
+			{ID: "a1b2", Tailnet: "headscale.example.com", Account: "user@example.com",
+				Current: true},
+			{ID: "c3d4", Tailnet: "lab.example.net", Account: "ops@example.net"},
+		},
 		Peers: []Peer{
 			{
 				ID: "2", HostName: "exit-gateway", DNSName: "exit-gateway.tailnet.example.com",

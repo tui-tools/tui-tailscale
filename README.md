@@ -80,6 +80,16 @@ The login server is validated the way the control plane's `S` validates headscal
 
 When the join advertises routes or an exit node, the same preview turns IP forwarding on, persistently: `install` writes `/etc/sysctl.d/99-tailscale.conf` and `sysctl -w` applies it now. tailscale warns about missing forwarding but does not set it.
 
+### Join profiles
+
+A machine that leaves and re-joins its tailnet while things are being set up (a logout to test a fresh join, a re-key, a move to a new control plane) is asked the same six questions every time. A **join profile** is this tool's preset for `j`: those answers under a name. When there are any, `j` opens with a picker (a saved profile, or new questions); picking one pre-fills every step, still editable and still previewed, so the join is confirm-and-go. The profile that matches the node's current settings is the one offered.
+
+After a join with new answers (right away with a pre-auth key, or once a browser login completes), the tool offers to save them: type a name, or leave it empty to skip. The save is a previewed write of the config file, with the lines that change shown as a diff: `/etc/tui-tailscale/config.toml` for root, `~/.config/tui-tailscale/config.toml` for any other user (written as that user; its profiles override the machine-wide ones of the same name). A profile is a `[[profile]]` table with `name`, `login_server`, `hostname`, `accept_routes`, `advertise_routes` and `advertise_exit_node` (see [`examples/config.toml`](examples/config.toml)). It never holds a secret: the pre-auth key is asked for every time and is not part of a profile.
+
+The node screen names the join profile that matches its settings, and the logout dialog says which one restores them. `--check` lists the profile names only (`joinProfiles`).
+
+**Login profiles are something else.** tailscale keeps one login profile per identity it has logged in with (`tailscale switch --list`). The node screen shows the one in use and how many there are, and `p` switches between them (`tailscale switch <id>`, previewed) when there is more than one.
+
 ### One setting at a time
 
 Each of these is one `tailscale set --<flag>=<value>`, which changes that setting and leaves every other one alone:

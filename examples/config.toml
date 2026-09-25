@@ -16,3 +16,19 @@ theme = ""
 
 # Every key can also be set in the environment, upper-cased and prefixed:
 #   TUI_TAILSCALE_SUDO="doas"
+
+# Join profiles: presets for `j`, one [[profile]] table each. `j` offers them
+# first and pre-fills every step from the one picked; after a join with new
+# answers it offers to save them here (a previewed write of this file). A
+# profile never holds a secret: the pre-auth key is asked for every time.
+# root saves to /etc/tui-tailscale/config.toml, any other user to
+# ~/.config/tui-tailscale/config.toml, whose profiles override the
+# machine-wide ones of the same name.
+#
+# [[profile]]
+# name = "subnet-router"
+# login_server = "https://headscale.example.com"
+# hostname = "gw-1"
+# accept_routes = false
+# advertise_routes = ["10.0.0.0/16"]
+# advertise_exit_node = true

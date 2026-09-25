@@ -41,6 +41,8 @@ const (
 	inputJoinKey
 	inputJoinHostname
 	inputJoinRoutes
+	// The name a join's answers are saved under as a join profile.
+	inputSaveProfile
 	// The one-setting edits.
 	inputRoutes
 	inputHostname
@@ -77,6 +79,10 @@ const (
 	pickerJoinAcceptRoutes
 	pickerJoinExitNode
 	pickerExitNode
+	// The join profile j starts from, and tailscale's login profile p
+	// switches to.
+	pickerJoinProfile
+	pickerLoginProfile
 
 	// The control plane's pickers. The two OIDC switches are pickers rather
 	// than typed words so there is nothing to spell wrong.
@@ -114,6 +120,8 @@ type joinDraft struct {
 	hostname     string
 	acceptRoutes bool
 	routes       []string
+	// from is the join profile the answers were pre-filled from, if any.
+	from *tailscale.JoinProfile
 }
 
 // app is the Bubble Tea model. It drives both ends of a self-hosted tailnet:
@@ -150,6 +158,22 @@ type app struct {
 	exitChoices map[string]string
 	join        joinDraft
 	notice      notice
+
+	// profiles are the join profiles (issue #4); profileChoices maps a
+	// profile picker's option to the profile name or login profile id it
+	// stands for.
+	profiles       profileStore
+	profileChoices map[string]string
+	// pendingJoin is the answers of the join being run, without its key;
+	// lastJoin keeps them while a browser login is pending, and offerSave
+	// asks for the save offer once the screen is free. saveDraft is the
+	// answers the save input is naming, and savingText the config file the
+	// confirmed save writes.
+	pendingJoin *tailscale.JoinProfile
+	lastJoin    *tailscale.JoinProfile
+	offerSave   *tailscale.JoinProfile
+	saveDraft   tailscale.JoinProfile
+	savingText  string
 
 	// cpDraft collects the control-plane forms' answers across their steps.
 	cpDraft controlPlaneDraft
@@ -438,6 +462,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.clampCursor()
 		a.followLogin()
+		if a.offerSave != nil && a.mode == modeBrowse {
+			answers := *a.offerSave
+			a.offerSave = nil
+			a.offerSaveProfile(answers)
+		}
 		return a, tea.Batch(retry, a.pollLogin())
 
 	case settleMsg:
@@ -493,6 +522,26 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // planResult turns a plan's outcome into the status line — and, for a join
 // that printed a login URL, into the dialog that says to open it.
 func (a *app) planResult(msg planRanMsg) {
+	if msg.plan.Action == tailscale.ActionJoin {
+		// The answers are offered as a join profile once the join went
+		// through: now, or when a pending browser login completes.
+		answers := a.pendingJoin
+		a.pendingJoin = nil
+		switch {
+		case answers == nil:
+		case msg.err == nil && msg.cleanupErr == nil:
+			a.offerSave = answers
+		case tailscale.ParseLoginURL(msg.output+"\n"+errText(msg.err)) != "":
+			a.lastJoin = answers
+		}
+	}
+	if msg.plan.Action == tailscale.ActionSaveProfile && msg.err == nil {
+		a.profiles.saved(a.savingText)
+		a.savingText = ""
+		a.setStatus(ui.StatusOK, "join profile saved in "+a.profiles.path+
+			" · j starts from it next time")
+		return
+	}
 	if msg.plan.Action == tailscale.ActionJoin {
 		text := msg.output
 		if msg.err != nil {
@@ -586,6 +635,7 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// chained control-plane flow would take next.
 		a.after = nil
 		a.cpDraft.forgetSecret()
+		a.pendingJoin, a.savingText = nil, ""
 		a.setStatus(ui.StatusInfo, "cancelled")
 		return a, nil
 	}
@@ -641,6 +691,8 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.tookJoinHostname(value)
 	case inputJoinRoutes:
 		a.tookJoinRoutes(value)
+	case inputSaveProfile:
+		a.tookSaveProfileName(value)
 	case inputRoutes:
 		a.openPlan(tailscale.BuildCommand(tailscale.Request{
 			Action: tailscale.ActionAdvertiseRoutes, Routes: tailscale.SplitList(value)}))
@@ -660,7 +712,7 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // list, which revokes every approval (previewed as a danger dialog).
 func acceptsEmpty(purpose inputPurpose) bool {
 	switch purpose {
-	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes,
+	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes, inputSaveProfile,
 		inputOIDCDomains, inputOIDCGroups, inputOIDCUsers, inputOIDCSecret,
 		inputACMEEmail, inputBaseDomain, inputApproveRoutes:
 		return true
@@ -673,6 +725,8 @@ func acceptsEmpty(purpose inputPurpose) bool {
 func (a *app) cancelled() {
 	a.join = joinDraft{}
 	a.exitChoices = nil
+	a.profileChoices = nil
+	a.saveDraft = tailscale.JoinProfile{}
 	a.cpDraft.forgetSecret()
 	a.setStatus(ui.StatusInfo, "cancelled")
 }
@@ -693,6 +747,10 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	switch purpose {
+	case pickerJoinProfile:
+		a.tookJoinProfile(choice)
+	case pickerLoginProfile:
+		a.tookLoginProfile(choice)
 	case pickerJoinAcceptRoutes:
 		a.join.acceptRoutes = choice == pickerYes
 		a.askJoinRoutes()
@@ -847,7 +905,17 @@ func (a *app) startAction(action tailscale.Action) {
 			a.setStatus(ui.StatusInfo, "the node is not logged in")
 			return
 		}
-		a.openPlan(tailscale.BuildCommand(tailscale.Request{Action: action}))
+		plan, err := tailscale.BuildCommand(tailscale.Request{Action: action})
+		if p, ok := a.profiles.matching(s.Prefs); ok {
+			plan.Body += "\n\nThe join profile " + p.Name + " matches this node's settings: " +
+				"j restores them from it (with a new login or pre-auth key)."
+		} else {
+			plan.Body += "\n\nNo join profile matches this node's settings: the next j " +
+				"offers to save its answers as one."
+		}
+		a.openPlan(plan, err)
+	case tailscale.ActionSwitchProfile:
+		a.openLoginProfilePicker()
 	}
 }
 
@@ -974,6 +1042,16 @@ func (a *app) openExitNodePicker() {
 // host to its own control plane is the usual first node.
 func (a *app) startJoin() {
 	a.join = joinDraft{}
+	if len(a.profiles.list) > 0 {
+		a.openJoinProfilePicker()
+		return
+	}
+	a.startJoinQuestions()
+}
+
+// startJoinQuestions opens the join form without a profile.
+func (a *app) startJoinQuestions() {
+	a.join = joinDraft{}
 	server := a.state.Prefs.ControlURL
 	if tailscale.IsTailscaleControl(server) {
 		// A fresh client carries Tailscale's server as its default; the
@@ -1003,7 +1081,10 @@ func (a *app) localServerURL() string {
 func (a *app) askJoinServer(value, problem string) {
 	help := "Join step 1 of 6 — the control server this node registers with: a Headscale's " +
 		"server_url, or " + tailscale.DefaultControlURL + " for Tailscale's own."
-	if local := a.localServerURL(); local != "" {
+	if p := a.join.from; p != nil {
+		help = "Join profile " + p.Name + " — every step is pre-filled from it and still " +
+			"editable.\n\n" + help
+	} else if local := a.localServerURL(); local != "" {
 		help += "\n\nThis control plane: headscale on this host serves " + local +
 			", so that is the answer offered."
 		if current := strings.TrimRight(a.state.Prefs.ControlURL, "/"); current != "" &&
@@ -1045,6 +1126,9 @@ func (a *app) tookJoinKey(value string) {
 	if current == "" {
 		current = a.state.Node.HostName
 	}
+	if p := a.join.from; p != nil {
+		current = p.Hostname
+	}
 	a.openInput(inputJoinHostname, "Hostname (optional)", "empty: the machine's own name",
 		current, "Join step 3 of 6 — the name this node registers with. Empty uses the "+
 			"machine's hostname.")
@@ -1058,15 +1142,22 @@ func (a *app) tookJoinHostname(value string) {
 		return
 	}
 	a.join.hostname = value
+	accept := a.state.Prefs.RouteAll
+	if p := a.join.from; p != nil {
+		accept = p.AcceptRoutes
+	}
 	a.openPicker(pickerJoinAcceptRoutes,
-		"Join step 4 of 6 — accept the subnet routes other nodes advertise?",
-		a.state.Prefs.RouteAll)
+		"Join step 4 of 6 — accept the subnet routes other nodes advertise?", accept)
 }
 
 // askJoinRoutes asks for the subnets to advertise.
 func (a *app) askJoinRoutes() {
+	routes := a.state.Prefs.SubnetRoutes()
+	if p := a.join.from; p != nil {
+		routes = p.AdvertiseRoutes
+	}
 	a.openInput(inputJoinRoutes, "Advertise subnet routes (optional)", "192.168.1.0/24",
-		strings.Join(a.state.Prefs.SubnetRoutes(), ", "),
+		strings.Join(routes, ", "),
 		"Join step 5 of 6 — subnets other nodes can reach through this one, "+
 			"comma-separated. Empty advertises none.")
 }
@@ -1080,9 +1171,12 @@ func (a *app) tookJoinRoutes(value string) {
 		return
 	}
 	a.join.routes = routes
+	offer := a.state.Prefs.AdvertisesExitNode()
+	if p := a.join.from; p != nil {
+		offer = p.AdvertiseExitNode
+	}
 	a.openPicker(pickerJoinExitNode,
-		"Join step 6 of 6 — offer this node as an exit node?",
-		a.state.Prefs.AdvertisesExitNode())
+		"Join step 6 of 6 — offer this node as an exit node?", offer)
 }
 
 // confirmJoin builds the join and opens its confirm. The key leaves the draft
@@ -1090,6 +1184,13 @@ func (a *app) tookJoinRoutes(value string) {
 func (a *app) confirmJoin(exitNode bool) {
 	d := a.join
 	a.join = joinDraft{}
+	// The answers without the key: what a join profile would keep.
+	answers := tailscale.JoinProfile{LoginServer: d.server, Hostname: d.hostname,
+		AcceptRoutes: d.acceptRoutes, AdvertiseRoutes: d.routes, AdvertiseExitNode: exitNode}
+	if d.from != nil {
+		answers.Name = d.from.Name
+	}
+	a.pendingJoin = &answers
 	a.openPlan(tailscale.BuildCommand(tailscale.Request{
 		Action:            tailscale.ActionJoin,
 		LoginServer:       d.server,
@@ -1224,4 +1325,16 @@ func (a *app) pollLogin() tea.Cmd {
 
 // loginCompleted is the hook a completed browser login runs: the join form's
 // answers, when this session collected them, are offered as a join profile.
-func (a *app) loginCompleted() {}
+func (a *app) loginCompleted() {
+	if a.lastJoin != nil {
+		a.offerSave, a.lastJoin = a.lastJoin, nil
+	}
+}
+
+// errText is an error's text, empty for none.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

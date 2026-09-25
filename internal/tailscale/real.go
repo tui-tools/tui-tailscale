@@ -3,6 +3,7 @@ package tailscale
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +78,34 @@ func New(sudoPrefix []string) (*Real, error) {
 // Name identifies the backend.
 func (r *Real) Name() string { return "tailscale" }
 
+// escalates reports whether a command runs through the escalation prefix.
+// Every change to the machine does, with two exceptions decided per command
+// rather than per binary: a join profile written to this user's own config
+// file (a root-owned file in a home directory would lock its owner out of
+// it), and a curl that only reads — the login server's certificate check —
+// which needs no privilege and should not be shown asking for one. The
+// companion install's curl writes under /etc and still escalates.
+func escalates(cmd runner.Command) bool {
+	if len(cmd.Argv) == 0 {
+		return true
+	}
+	switch cmd.Argv[0] {
+	case "install":
+		home, err := os.UserHomeDir()
+		dest := cmd.Argv[len(cmd.Argv)-1]
+		return err != nil || home == "" || home == "/" || os.Geteuid() == 0 ||
+			!strings.HasPrefix(dest, strings.TrimRight(home, "/")+"/")
+	case "curl":
+		for i, a := range cmd.Argv {
+			if a == "-o" && i+1 < len(cmd.Argv) && cmd.Argv[i+1] != "/dev/null" {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // Describe is the one-line summary shown in the header.
 func (r *Real) Describe() string {
 	run, err := r.runnerFor("tailscale")
@@ -89,15 +118,25 @@ func (r *Real) Describe() string {
 	return run.Describe()
 }
 
-// runnerFor resolves a binary's runner on first use and caches it. A binary
-// that cannot be resolved is remembered as missing so it is not probed again.
+// runnerFor resolves a binary's escalating runner on first use and caches it.
 func (r *Real) runnerFor(bin string) (*runner.Runner, error) {
+	return r.runnerAs(bin, true)
+}
+
+// runnerAs resolves a binary's runner, escalating or not, on first use and
+// caches it. A binary that cannot be resolved is remembered as missing so it
+// is not probed again.
+func (r *Real) runnerAs(bin string, escalate bool) (*runner.Runner, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if run, ok := r.runners[bin]; ok {
+	cacheKey := bin
+	if !escalate {
+		cacheKey += "\x00user"
+	}
+	if run, ok := r.runners[cacheKey]; ok {
 		return run, nil
 	}
-	if err, ok := r.missing[bin]; ok {
+	if err, ok := r.missing[cacheKey]; ok {
 		return nil, err
 	}
 	paths, known := searchPaths[bin]
@@ -105,22 +144,26 @@ func (r *Real) runnerFor(bin string) (*runner.Runner, error) {
 		// Nothing outside the table may be started: a command naming another
 		// binary is a bug in BuildCommand, not something to resolve on PATH.
 		err := fmt.Errorf("%w: %s is not a binary this tool drives", runner.ErrNotAvailable, bin)
-		r.missing[bin] = err
+		r.missing[cacheKey] = err
 		return nil, err
+	}
+	sudo := r.sudo
+	if !escalate {
+		sudo = nil
 	}
 	run, err := runner.New(runner.Options{
 		Bin:             bin,
 		SearchPaths:     paths,
-		SudoPrefix:      r.sudo,
+		SudoPrefix:      sudo,
 		PrivilegedReads: &unprivileged,
 		Timeout:         timeouts[bin],
 		InstallHint:     installHints[bin],
 	})
 	if err != nil {
-		r.missing[bin] = err
+		r.missing[cacheKey] = err
 		return nil, err
 	}
-	r.runners[bin] = run
+	r.runners[cacheKey] = run
 	return run, nil
 }
 
@@ -141,11 +184,11 @@ func (r *Real) Preview(cmd runner.Command) string {
 	if len(cmd.Argv) == 0 {
 		return ""
 	}
-	run, err := r.runnerFor(cmd.Argv[0])
+	run, err := r.runnerAs(cmd.Argv[0], escalates(cmd))
 	if err != nil {
 		// The binary is missing (curl before an install, say); show the
 		// honest argv with the prefix it would get.
-		if len(r.sudo) > 0 {
+		if len(r.sudo) > 0 && escalates(cmd) {
 			return strings.Join(r.sudo, " ") + " " + cmd.String()
 		}
 		return cmd.String()
@@ -158,7 +201,7 @@ func (r *Real) Run(ctx context.Context, cmd runner.Command) (string, error) {
 	if len(cmd.Argv) == 0 {
 		return "", fmt.Errorf("nothing to run")
 	}
-	run, err := r.runnerFor(cmd.Argv[0])
+	run, err := r.runnerAs(cmd.Argv[0], escalates(cmd))
 	if err != nil {
 		return "", err
 	}
@@ -208,6 +251,11 @@ func (r *Real) Load(ctx context.Context) (State, error) {
 		return state, nil
 	}
 	state.Prefs, state.PrefsRead = prefs, true
+	// tailscale's own login profiles; an older client without `switch`
+	// simply has none to show.
+	if out, err := r.read(ctx, run, "tailscale", "switch", "--list"); err == nil {
+		state.LoginProfiles = ParseLoginProfiles(out)
+	}
 	return state, nil
 }
 

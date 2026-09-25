@@ -163,6 +163,7 @@ func (a *app) nodeLines() []string {
 			a.fact("accept DNS", yesNo(p.CorpDNS), t.Base),
 		)
 	}
+	lines = append(lines, a.profileLines()...)
 	lines = append(lines, a.fact("version", orDash(n.Version), t.Base))
 	for i, h := range n.Health {
 		label := ""
