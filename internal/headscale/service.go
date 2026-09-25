@@ -21,6 +21,10 @@ import (
 // is-enabled answer that could not be read) is not a reason to skip the read:
 // headscale may be running outside systemd.
 func NotRunningMessage(cp ControlPlane) string {
+	if cp.ConfigMissing {
+		// Whatever systemd says, nothing starts without the file.
+		return ConfigMissingMessage
+	}
 	switch cp.ServiceState {
 	case "inactive", "failed":
 	default:
@@ -39,6 +43,11 @@ func NotRunningMessage(cp ControlPlane) string {
 	}
 	return "headscale is not running · S configures and starts it"
 }
+
+// ConfigMissingMessage is what every control-plane screen says when
+// headscale is installed and its configuration file is gone.
+const ConfigMissingMessage = "headscale's configuration is missing (" + HeadscaleConfigPath +
+	") · i reinstalls the package to restore it, previewed"
 
 // ControlPlaneConfigured reports whether config.yaml has been set up for
 // clients at all: a server_url that is not the stock loopback one. It is what

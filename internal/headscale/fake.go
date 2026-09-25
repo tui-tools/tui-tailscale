@@ -54,6 +54,10 @@ type Fake struct {
 	// pki is what the demo's tui-cert reports: one local CA and the pair it
 	// issued for the control plane.
 	pki LocalPKI
+	// configMissing is a deleted /etc/headscale/config.yaml (and with it
+	// /var/lib/headscale): the partial reset of issue #18, which the
+	// package reinstall undoes.
+	configMissing bool
 }
 
 // demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake.
@@ -251,9 +255,62 @@ func (f *Fake) chown(argv []string) (string, error) {
 	return "", nil
 }
 
+// SetConfigMissing deletes the demo's config.yaml and state directory, the
+// way a partial reset leaves a host: headscale installed, its unit failed and
+// disabled, nothing to read or edit until i reinstalls the package.
+func (f *Fake) SetConfigMissing() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.configMissing = true
+	f.serviceState, f.serviceEnabled = "failed", "disabled"
+	for p := range f.stats {
+		if p == HeadscaleConfigPath || p == HeadscaleStateDir ||
+			strings.HasPrefix(p, HeadscaleStateDir+"/") {
+			delete(f.stats, p)
+		}
+	}
+	f.state.Users, f.state.Nodes, f.state.PreAuthKeys = nil, nil, nil
+	f.state.Registrations = nil
+	f.reloadControlPlane()
+}
+
+// demoPackageConfig is the example configuration the package ships, which a
+// reinstall puts back: loopback server_url and placeholders, so S is next.
+const demoPackageConfig = `# headscale example configuration (as packaged)
+server_url: http://127.0.0.1:8080
+listen_addr: 127.0.0.1:8080
+dns:
+  magic_dns: true
+  base_domain: example.com
+`
+
+// reinstall applies the package reinstall: a deleted configuration comes back
+// as the package's example, and the state directory with it.
+func (f *Fake) reinstall() {
+	if !f.configMissing {
+		return
+	}
+	f.configMissing = false
+	f.config = demoPackageConfig
+	f.serviceState = "inactive"
+	f.stats[HeadscaleConfigPath] = FileStat{Path: HeadscaleConfigPath, User: "root",
+		Group: "root", Mode: 0o644}
+	f.stats[HeadscaleStateDir] = FileStat{Path: HeadscaleStateDir, User: "headscale",
+		Group: "headscale", Mode: 0o750}
+	f.reloadControlPlane()
+}
+
 // reloadControlPlane re-reads the demo's configuration into the state, the way
 // a reload on a real host would.
 func (f *Fake) reloadControlPlane() {
+	if f.configMissing {
+		_, dirThere := f.stats[HeadscaleStateDir]
+		f.state.ControlPlane = ControlPlane{ConfigPath: HeadscaleConfigPath,
+			Error:         "cat: " + HeadscaleConfigPath + ": No such file or directory",
+			ConfigMissing: true, StateDirMissing: !dirThere,
+			ServiceState: f.serviceState, ServiceEnabled: f.serviceEnabled}
+		return
+	}
 	cp, err := ParseHeadscaleConfig([]byte(f.config))
 	if err != nil {
 		f.state.ControlPlane = ControlPlane{
@@ -410,10 +467,12 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 	case len(argv) >= 1 && (argv[0] == "apt-get" || argv[0] == "dnf" || argv[0] == "pacman") &&
 		(hasArg(argv, PackageName) || hasArg(argv, "tui-tools/"+PackageName)):
 		// The package install puts headscale on the machine; its socket
-		// takes a moment to answer after it.
+		// takes a moment to answer after it. A reinstall puts back a
+		// deleted configuration.
 		if f.absent {
 			f.absent, f.refuse = false, 1
 		}
+		f.reinstall()
 		return "", nil
 	case len(argv) >= 1 && isInstallStep(argv[0]):
 		// The companion install changes files and packages the demo does not
@@ -522,6 +581,22 @@ func (d *demoProcess) String() string { return d.name }
 // DemoAuthID is the registration the demo has waiting: a laptop that ran
 // `tailscale up --login-server` and has not logged in yet.
 const DemoAuthID = "hskey-authreq-DemoLaptopWaiting0001"
+
+// SetNodes replaces the registered nodes, so a test can start from a control
+// plane with none.
+func (f *Fake) SetNodes(nodes []Node) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.Nodes = append([]Node(nil), nodes...)
+}
+
+// SetPreAuthKeys replaces the pre-auth keys, so a test can stage a spent or
+// expired one.
+func (f *Fake) SetPreAuthKeys(keys []PreAuthKey) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.PreAuthKeys = append([]PreAuthKey(nil), keys...)
+}
 
 // SetRegistrations replaces the pending registrations, so a test can stage
 // the ones it wants.
@@ -747,6 +822,12 @@ func demoState() State {
 				Expiration: now.Add(24 * time.Hour),
 				CreatedAt:  now.Add(-2 * time.Hour),
 				ACLTags:    []string{"tag:router"}},
+			// The single-use key exit-gateway joined with: spent, so the
+			// keys screen marks it (issue #19).
+			{ID: "2", User: "user@example.com", KeyPrefix: "abcdef0123", Reusable: false,
+				Ephemeral: false, Used: true,
+				Expiration: now.Add(20 * time.Hour),
+				CreatedAt:  now.Add(-4 * time.Hour)},
 		},
 	}
 }

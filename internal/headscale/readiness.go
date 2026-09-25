@@ -56,6 +56,18 @@ type Readiness struct {
 	// node counting as one; RoutesApproved is the last step, none pending.
 	RoutesPending  int  `json:"routesPending"`
 	RoutesApproved bool `json:"routesApproved"`
+	// CanJoinMore answers whether another machine could log in now: an
+	// identity provider is configured, or a pre-auth key is still usable.
+	// Once a node exists it is no longer a blocking step (issue #19): a
+	// single-use key spent on the first node is the normal end of a first
+	// join. CanJoinMoreReason says why not, when it cannot: "spent" (every
+	// key was single-use and is used), "expired" (every key left expired)
+	// or "none" (no key and no identity provider).
+	CanJoinMore       bool   `json:"canJoinMore"`
+	CanJoinMoreReason string `json:"canJoinMoreReason,omitempty"`
+	// Hint is a non-blocking suggestion shown after the step, when there is
+	// one: how to add another machine once the last key is spent.
+	Hint string `json:"hint,omitempty"`
 	// Next is the first missing step: install, server, unit, identity,
 	// first-node, routes, or ready.
 	Next string `json:"next"`
@@ -87,6 +99,13 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		r.RoutesPending += pendingRoutes(n)
 	}
 	r.RoutesApproved = r.RoutesPending == 0
+	r.CanJoinMore = r.OIDCConfigured || r.PreAuthKey
+	if !r.CanJoinMore {
+		r.CanJoinMoreReason = joinMoreReason(h.PreAuthKeys, now)
+		if r.FirstNode {
+			r.Hint = anotherMachineHint(r.CanJoinMoreReason)
+		}
+	}
 
 	switch {
 	case !r.Installed:
@@ -107,7 +126,9 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		r.NextStep = strconv.Itoa(r.Ports.ControlPort) + "/tcp is closed in the host " +
 			"firewall (read from " + r.Ports.Source + "): clients cannot reach headscale · " +
 			firewallHint(h.Firewall)
-	case !r.OIDCConfigured && !r.PreAuthKey:
+	case !r.CanJoinMore && !r.FirstNode:
+		// Only a way in for the first node blocks: once one is there, a
+		// spent key is the hint below, not a missing step.
 		r.Next = NextIdentity
 		r.NextStep = "no way to log in yet · O sets up an identity provider, or n on " +
 			"the keys screen creates a pre-auth key"
@@ -134,6 +155,51 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	return r
 }
 
+// The reasons no other machine can log in now, for CanJoinMoreReason.
+const (
+	JoinMoreSpent   = "spent"
+	JoinMoreExpired = "expired"
+	JoinMoreNone    = "none"
+)
+
+// joinMoreReason says why no key is usable: the keys there are were
+// single-use and are spent, or they expired, or there is none at all. A
+// spent key counts first, since it is the one the operator just used.
+func joinMoreReason(keys []PreAuthKey, now time.Time) string {
+	spent, expired := false, false
+	for _, k := range keys {
+		switch {
+		case !k.Reusable && k.Used:
+			spent = true
+		case !k.Expiration.IsZero() && !k.Expiration.After(now):
+			expired = true
+		}
+	}
+	switch {
+	case spent:
+		return JoinMoreSpent
+	case expired:
+		return JoinMoreExpired
+	}
+	return JoinMoreNone
+}
+
+// anotherMachineHint is how to add the next machine once none can log in.
+func anotherMachineHint(reason string) string {
+	why := ""
+	switch reason {
+	case JoinMoreSpent:
+		why = " (the last key was single-use and is spent)"
+	case JoinMoreExpired:
+		why = " (the last key expired)"
+	}
+	return "to add another machine: n on the keys screen" + why + ", or O for browser login"
+}
+
+// Spent reports a single-use key that already registered its machine: it
+// stays on headscale's list and can never be used again.
+func (k PreAuthKey) Spent() bool { return !k.Reusable && k.Used }
+
 // firewallHint is the way to open a port: f when tui-firewall is here, the
 // package that brings it otherwise.
 func firewallHint(fw Firewall) string {
@@ -157,6 +223,8 @@ func serverReady(cp ControlPlane) bool {
 // serverStep says what S has to fix.
 func serverStep(cp ControlPlane) string {
 	switch {
+	case cp.ConfigMissing:
+		return ConfigMissingMessage
 	case !cp.Readable:
 		reason := cp.Error
 		if reason == "" {

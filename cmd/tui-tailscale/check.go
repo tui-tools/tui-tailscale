@@ -58,9 +58,13 @@ type checkReport struct {
 
 // nodeSummary is the node, reduced.
 type nodeSummary struct {
-	Installed        bool   `json:"installed"`
-	DaemonRunning    bool   `json:"daemonRunning"`
-	NotRunning       bool   `json:"notRunning,omitempty"`
+	Installed     bool `json:"installed"`
+	DaemonRunning bool `json:"daemonRunning"`
+	NotRunning    bool `json:"notRunning,omitempty"`
+	// Daemon is tailscaled in one word: running, stopped, disabled, masked
+	// or unknown; absent when the client is not installed. stopped,
+	// disabled and masked are what u starts.
+	Daemon           string `json:"daemon,omitempty"`
 	PermissionDenied bool   `json:"permissionDenied,omitempty"`
 	Error            string `json:"error,omitempty"`
 
@@ -197,6 +201,7 @@ func summariseNode(s tailscale.State) nodeSummary {
 		Installed:        s.Installed,
 		DaemonRunning:    s.DaemonRunning,
 		NotRunning:       s.NotRunning,
+		Daemon:           s.Daemon(),
 		PermissionDenied: s.PermissionDenied,
 		Error:            s.Error,
 		BackendState:     s.Node.BackendState,

@@ -255,6 +255,18 @@ type app struct {
 	loginPolling bool
 	loginPolls   int
 	loginPollURL string
+	// loginWaiting reports that the login URL the status line carried is
+	// gone and the node is not running yet: the browser confirmed, and
+	// tailscaled is still on its way from NeedsLogin through Starting to
+	// Running (issue #20). loginWaitPolls counts the re-reads spent waiting,
+	// bounded by loginGracePolls while the node still says it needs a login
+	// and by loginWaitLimit otherwise.
+	loginWaiting   bool
+	loginWaitPolls int
+	// daemonStarted reports that u just started tailscaled: the first read
+	// that finds it answering replaces the status line with where the node
+	// stands (issue #18).
+	daemonStarted bool
 }
 
 // settleDelay is how long the one automatic re-read after a change waits.
@@ -273,6 +285,22 @@ var loginPollDelay = 3 * time.Second
 // loginPollLimit bounds the re-reads spent on one pending login URL: about
 // three minutes at loginPollDelay, after which r still re-reads by hand.
 const loginPollLimit = 60
+
+// loginGracePolls is how many re-reads a vanished login URL gets while the
+// node still reports NeedsLogin (or NoState) before the login is called
+// expired: headscale answers /register/confirm before tailscaled has picked
+// the login up, so for a few seconds after a successful browser login the
+// node looks exactly like one whose login was cancelled.
+const loginGracePolls = 5
+
+// loginWaitLimit bounds the re-reads spent on a node that left NeedsLogin
+// (Starting, typically) without reaching Running yet: about two minutes at
+// loginPollDelay, after which r still re-reads by hand.
+const loginWaitLimit = 40
+
+// loginExpiredLine is the status line for a login that vanished without the
+// node logging in. A later read that finds the node running replaces it.
+const loginExpiredLine = "the pending login expired or was cancelled — j starts a new one"
 
 // loginPollMsg asks for the re-read while a login is pending.
 type loginPollMsg struct{}
@@ -521,6 +549,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.clampCursor()
 		a.followLogin()
+		a.replaceStaleLogin()
+		a.followDaemonStart()
 		if a.offerSave != nil && a.mode == modeBrowse {
 			answers := *a.offerSave
 			a.offerSave = nil
@@ -537,10 +567,14 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case loginPollMsg:
 		a.loginPolling = false
-		if a.state.Node.AuthURL == "" {
+		switch {
+		case a.state.Node.AuthURL != "":
+			a.loginPolls++
+		case a.loginWaiting:
+			a.loginWaitPolls++
+		default:
 			return a, nil
 		}
-		a.loginPolls++
 		return a, a.loadNode()
 
 	case firewallDoneMsg:
@@ -573,9 +607,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hsPlanRanMsg:
 		a.busy, a.running = false, ""
 		a.loading = true
-		if msg.err != nil {
+		switch {
+		case msg.err != nil:
 			a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
-		} else {
+		case msg.plan.Reinstall:
+			a.setStatus(ui.StatusOK, "headscale reinstalled · "+headscale.HeadscaleConfigPath+
+				" is back (the package's example) · S configures it and starts the unit")
+		default:
 			a.setStatus(ui.StatusOK, "headscale installed · S configures it and starts the unit")
 		}
 		return a, a.reloadAfterChange()
@@ -646,6 +684,7 @@ func (a *app) planResult(msg planRanMsg) {
 			// there to select; the notice prints it outside its frame.
 			a.setStatus(ui.StatusWarn, url)
 			a.loginURLShown = url
+			a.loginWaiting, a.loginWaitPolls = false, 0
 			a.openNotice("Log in to finish joining",
 				"tailscale is waiting for a login. Open the URL below in a browser — on "+
 					"any machine — and log in (with a self-hosted control plane, this is "+
@@ -668,6 +707,11 @@ func (a *app) planResult(msg planRanMsg) {
 		// The package manager's first line of output ("Get:1 …") says
 		// nothing about the result.
 		a.setStatus(ui.StatusOK, "tailscale installed · j joins a tailnet")
+	case msg.plan.Action == tailscale.ActionStartDaemon:
+		// The read that follows says where the node stands; until then,
+		// what was done.
+		a.setStatus(ui.StatusOK, "tailscaled started and enabled at boot · reading the node…")
+		a.daemonStarted = true
 	default:
 		if summary := routingSummary(msg.plan); summary != "" {
 			a.setStatus(ui.StatusOK, summary)
@@ -996,6 +1040,13 @@ func (a *app) startAction(action tailscale.Action) {
 		}
 		a.openPlan(tailscale.BuildCommand(tailscale.Request{
 			Action: action, Distro: a.state.Distro}))
+		return
+	}
+	if action == tailscale.ActionUp && a.state.DaemonStartable() {
+		// u on a stopped tailscaled starts it (issue #18): the fix the
+		// screen names, previewed, instead of a command to type elsewhere.
+		a.openPlan(tailscale.BuildCommand(tailscale.Request{
+			Action: tailscale.ActionStartDaemon, DaemonEnabled: a.state.DaemonEnabled}))
 		return
 	}
 	if !a.nodeReachable() {
@@ -1417,35 +1468,119 @@ func (a *app) rowCount() int {
 // followLogin keeps the status line honest about a login it announced. While
 // the status line carries a pending login URL, each read either finds the same
 // URL (nothing to say), a new one (the line shows the new one), the node
-// logged in (the dead link is replaced by who joined), or no login pending at
-// all (the link expired, and the line says so). When the login completes while
-// its notice is still open, the notice closes: there is nothing left to open.
+// logged in (the dead link is replaced by who joined), or no URL any more.
+//
+// A URL that is gone is not yet an expired login (issue #20): headscale
+// confirms the registration before tailscaled has taken it, and the node goes
+// NeedsLogin, then NoState or Starting, then Running, all without a URL. So a
+// vanished URL starts a wait: the node is re-read until it runs (who joined),
+// until it has said NeedsLogin for loginGracePolls reads in a row (expired),
+// or until loginWaitLimit reads (r re-reads by hand). When the login
+// completes while its notice is still open, the notice closes: there is
+// nothing left to open.
 func (a *app) followLogin() {
 	shown := a.loginURLShown
-	if shown == "" {
+	if shown == "" && !a.loginWaiting {
 		return
 	}
 	n := a.state.Node
 	switch {
-	case n.AuthURL == shown:
+	case n.AuthURL != "" && n.AuthURL == shown:
 		return
 	case n.AuthURL != "":
+		// A new URL (or the old one back after a wait): follow it.
+		a.loginWaiting, a.loginWaitPolls = false, 0
+		previous := shown
 		a.setStatus(ui.StatusWarn, n.AuthURL)
 		a.loginURLShown = n.AuthURL
-		if a.mode == modeNotice && a.notice.copyable == shown {
+		if a.mode == modeNotice && previous != "" && a.notice.copyable == previous {
 			a.notice.copyable = n.AuthURL
 		}
 		return
 	}
-	if a.mode == modeNotice && a.notice.copyable == shown {
+	if shown != "" && a.mode == modeNotice && a.notice.copyable == shown {
 		a.mode = modeBrowse
 	}
 	if a.state.LoggedIn() && n.BackendState == tailscale.StateRunning {
+		a.loginWaiting, a.loginWaitPolls = false, 0
 		a.setStatus(ui.StatusOK, joinedLine(n))
 		a.loginCompleted()
 		return
 	}
-	a.setStatus(ui.StatusWarn, "the pending login expired or was cancelled — j starts a new one")
+	if !a.loginWaiting {
+		// The URL just went away: wait for the node before calling it.
+		a.loginWaiting, a.loginWaitPolls = true, 0
+	}
+	switch loginVerdict(n.BackendState, a.loginWaitPolls) {
+	case loginExpired:
+		a.loginWaiting, a.loginWaitPolls = false, 0
+		a.setStatus(ui.StatusWarn, loginExpiredLine)
+	case loginGaveUp:
+		a.loginWaiting, a.loginWaitPolls = false, 0
+		a.setStatusf(ui.StatusWarn, "the login went through but the node is still %s · "+
+			"r re-reads", stateWord(n.BackendState))
+	default:
+		a.setStatusf(ui.StatusInfo, "the login link is gone · waiting for the node to come up (%s) · "+
+			"r re-reads", stateWord(n.BackendState))
+	}
+}
+
+// The verdicts on a login whose URL is gone and whose node is not running.
+const (
+	loginStillWaiting = iota
+	loginExpired
+	loginGaveUp
+)
+
+// loginVerdict decides what a vanished login URL means, given the node's
+// state and the re-reads already spent waiting: a node that still needs a
+// login after the grace period lost it; a node on its way up is waited for,
+// up to loginWaitLimit.
+func loginVerdict(state string, polls int) int {
+	switch state {
+	case tailscale.StateNeedsLogin, tailscale.StateNoState, "":
+		if polls >= loginGracePolls {
+			return loginExpired
+		}
+	default:
+		if polls >= loginWaitLimit {
+			return loginGaveUp
+		}
+	}
+	return loginStillWaiting
+}
+
+// replaceStaleLogin swaps a login line that a read has made untrue for the
+// truth: a node found running and logged in under an "expired" line (the
+// login went through after all, as a re-read by hand shows) says who joined.
+func (a *app) replaceStaleLogin() {
+	n := a.state.Node
+	if a.status != loginExpiredLine || !a.state.LoggedIn() ||
+		n.BackendState != tailscale.StateRunning {
+		return
+	}
+	a.setStatus(ui.StatusOK, joinedLine(n))
+	a.loginCompleted()
+}
+
+// followDaemonStart says where the node stands once the tailscaled u started
+// answers: logged out (j joins), or the state it came back in. While the
+// settling re-read still finds it down, the line is left to the settle logic.
+func (a *app) followDaemonStart() {
+	if !a.daemonStarted || !a.state.DaemonRunning {
+		if a.daemonStarted && !a.settling {
+			// The settle retry was spent and it still does not answer.
+			a.daemonStarted = false
+		}
+		return
+	}
+	a.daemonStarted = false
+	n := a.state.Node
+	if !a.state.LoggedIn() && n.AuthURL == "" {
+		a.setStatus(ui.StatusOK, "tailscaled is running · logged out · j joins a tailnet")
+		return
+	}
+	a.setStatusf(ui.StatusOK, "tailscaled is running · %s", stateLine(n))
 }
 
 // joinedLine says who joined which tailnet, for the status line that replaces
@@ -1465,12 +1600,19 @@ func joinedLine(n tailscale.Node) string {
 }
 
 // pollLogin schedules the next re-read while a login is pending, bounded per
-// URL: a new URL starts a new count, and no pending login resets it.
+// URL: a new URL starts a new count, and no pending login resets it. After the
+// URL is gone, it keeps re-reading while followLogin waits for the node.
 func (a *app) pollLogin() tea.Cmd {
 	url := a.state.Node.AuthURL
 	if url == "" {
 		a.loginPolls, a.loginPollURL = 0, ""
-		return nil
+		if !a.loginWaiting || a.loginPolling {
+			return nil
+		}
+		// The URL is gone and the node is on its way up: keep re-reading
+		// until followLogin reaches a verdict.
+		a.loginPolling = true
+		return tea.Tick(loginPollDelay, func(time.Time) tea.Msg { return loginPollMsg{} })
 	}
 	if url != a.loginPollURL {
 		a.loginPolls, a.loginPollURL = 0, url

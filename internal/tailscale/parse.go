@@ -282,3 +282,20 @@ func ClassifyReadError(text string) ReadProblem {
 	}
 	return ProblemOther
 }
+
+// ParseIsEnabled reads the answer of `systemctl is-enabled <unit>`: the first
+// word of its output ("enabled", "disabled", "masked", "static"…), or empty
+// when it printed nothing a unit state looks like.
+func ParseIsEnabled(out string) string {
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return ""
+	}
+	word := fields[0]
+	for _, r := range word {
+		if (r < 'a' || r > 'z') && r != '-' {
+			return ""
+		}
+	}
+	return word
+}

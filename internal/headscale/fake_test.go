@@ -423,3 +423,128 @@ func TestInstallOnOmarchyNeverUpgrades(t *testing.T) {
 		t.Errorf("the body does not say how Omarchy upgrades: %q", plan.Body)
 	}
 }
+
+// Issue #19: a private tailnet whose first node joined with a single-use key.
+// The key is spent and there is no identity provider, and nothing is broken:
+// readiness is ready, with how to add the next machine as a hint.
+func TestReadinessWithASpentKeyAfterTheFirstNode(t *testing.T) {
+	now := time.Now()
+	f := NewFake()
+	f.SetService("active", "enabled")
+	state, _ := f.Load(t.Context())
+	state.ControlPlane.OIDC = OIDCConfig{}
+	state.OIDCInferred = false
+	state.Nodes = []Node{{ID: "1", Name: "gateway", User: "ops", Online: true}}
+	state.PreAuthKeys = []PreAuthKey{{ID: "1", User: "ops", Used: true,
+		Expiration: now.Add(time.Hour)}}
+
+	r := ReadinessFor(state, now)
+	if r.Next != NextReady || r.PreAuthKey || !r.FirstNode {
+		t.Errorf("readiness = %+v, want ready", r)
+	}
+	if r.CanJoinMore || r.CanJoinMoreReason != JoinMoreSpent {
+		t.Errorf("canJoinMore = %v (%q), want false (spent)", r.CanJoinMore, r.CanJoinMoreReason)
+	}
+	if !strings.Contains(r.Hint, "n on the keys screen (the last key was single-use and is "+
+		"spent), or O for browser login") {
+		t.Errorf("hint = %q", r.Hint)
+	}
+
+	// Before any node, the same spent key still blocks: nothing can join.
+	state.Nodes = nil
+	if r := ReadinessFor(state, now); r.Next != NextIdentity || r.Hint != "" {
+		t.Errorf("no node yet = %+v", r)
+	}
+
+	// Expired keys and no keys at all are their own reasons.
+	state.Nodes = []Node{{ID: "1"}}
+	state.PreAuthKeys = []PreAuthKey{{Reusable: true, Expiration: now.Add(-time.Hour)}}
+	if r := ReadinessFor(state, now); r.CanJoinMoreReason != JoinMoreExpired ||
+		!strings.Contains(r.Hint, "(the last key expired)") {
+		t.Errorf("expired = %+v", r)
+	}
+	state.PreAuthKeys = nil
+	if r := ReadinessFor(state, now); r.CanJoinMoreReason != JoinMoreNone || r.Next != NextReady {
+		t.Errorf("no key = %+v", r)
+	}
+
+	// A usable key or an identity provider means another machine can join.
+	state.PreAuthKeys = []PreAuthKey{{Reusable: true, Used: true}}
+	if r := ReadinessFor(state, now); !r.CanJoinMore || r.CanJoinMoreReason != "" || r.Hint != "" {
+		t.Errorf("reusable key = %+v", r)
+	}
+}
+
+// --- a deleted configuration (issue #18) -------------------------------------
+
+// MissingPaths reads stat's complaints, in both quoting styles.
+func TestMissingPaths(t *testing.T) {
+	out := "stat: cannot statx '/etc/headscale/config.yaml': No such file or directory\n" +
+		"stat: cannot stat ‘/var/lib/headscale’: No such file or directory\n"
+	got := MissingPaths(out, []string{HeadscaleConfigPath, HeadscaleStateDir, "/etc"})
+	if !got[HeadscaleConfigPath] || !got[HeadscaleStateDir] || got["/etc"] {
+		t.Errorf("missing = %v", got)
+	}
+	if got := MissingPaths("root:root:644:/etc/headscale/config.yaml",
+		[]string{HeadscaleConfigPath}); len(got) != 0 {
+		t.Errorf("a path stat printed is not missing: %v", got)
+	}
+}
+
+// The reinstall that restores a deleted configuration, per package manager:
+// dpkg needs --force-confmiss, rpm and pacman restore it on their own.
+func TestBuildReinstall(t *testing.T) {
+	plan, err := BuildReinstall(ubuntu())
+	if err != nil || !plan.Reinstall || len(plan.Steps) != 1 ||
+		plan.Steps[0].String() != "apt-get install --reinstall -y -o "+
+			"Dpkg::Options::=--force-confmiss headscale" {
+		t.Errorf("apt = %+v, %v", plan.Steps, err)
+	}
+	plan, _ = BuildReinstall(pkgmgr.Distro{ID: "fedora", VersionID: "44"})
+	if len(plan.Steps) != 1 || plan.Steps[0].String() != "dnf reinstall -y headscale" {
+		t.Errorf("dnf = %+v", plan.Steps)
+	}
+	plan, _ = BuildReinstall(pkgmgr.Distro{ID: "arch"})
+	if len(plan.Steps) != 1 || plan.Steps[0].String() != "pacman -Syu --noconfirm tui-tools/headscale" {
+		t.Errorf("pacman = %+v", plan.Steps)
+	}
+	if _, err := BuildReinstall(pkgmgr.Distro{ID: "plan9"}); err == nil {
+		t.Error("an unknown distribution has no plan")
+	}
+}
+
+// A partial reset: the demo control plane says its configuration is missing,
+// readiness names it before anything else, and the reinstall puts back the
+// package's example, after which S is next.
+func TestConfigMissingAndReinstall(t *testing.T) {
+	now := time.Now()
+	f := NewFake()
+	f.SetConfigMissing()
+	state, _ := f.Load(t.Context())
+	cp := state.ControlPlane
+	if !cp.ConfigMissing || !cp.StateDirMissing || cp.Readable || !state.NotRunning ||
+		state.Error != ConfigMissingMessage {
+		t.Fatalf("partial reset = %+v / %+v", state, cp)
+	}
+	if r := ReadinessFor(state, now); r.Next != NextServer || r.NextStep != ConfigMissingMessage {
+		t.Errorf("readiness = %+v", r)
+	}
+	plan, err := BuildReinstall(state.Distro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range plan.Steps {
+		if _, err := f.Run(t.Context(), step); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, _ = f.Load(t.Context())
+	if state.ControlPlane.ConfigMissing || state.ControlPlane.StateDirMissing ||
+		!state.ControlPlane.Readable {
+		t.Errorf("after the reinstall = %+v", state.ControlPlane)
+	}
+	if r := ReadinessFor(state, now); r.Next != NextServer ||
+		!strings.Contains(r.NextStep, "S sets the transport") {
+		t.Errorf("after the reinstall, S is next: %+v", r)
+	}
+}

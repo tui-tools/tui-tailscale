@@ -58,6 +58,15 @@ type ControlPlane struct {
 	Readable bool `json:"readable"`
 	// Error carries why an unreadable configuration could not be read.
 	Error string `json:"error,omitempty"`
+	// ConfigMissing reports that the file does not exist at all: headscale
+	// is installed and its configuration was deleted (a partial reset).
+	// Nothing can start or be edited until the package puts it back, which
+	// is what i offers then (issue #18).
+	ConfigMissing bool `json:"configMissing,omitempty"`
+	// StateDirMissing reports that /var/lib/headscale does not exist. Alone
+	// it is harmless (the unit's StateDirectory recreates it at the next
+	// start), and the panel says so rather than leaving it unexplained.
+	StateDirMissing bool `json:"stateDirMissing,omitempty"`
 	// ServerURL is the base URL clients — and the IdP's redirect — must reach.
 	ServerURL string `json:"serverUrl,omitempty"`
 	// ListenAddr is the address headscale binds.

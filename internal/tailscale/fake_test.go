@@ -173,3 +173,59 @@ func TestFakeUpWhileLoggedOutIsRefused(t *testing.T) {
 		t.Error("a logged-out node cannot simply come up")
 	}
 }
+
+// A confirmed browser login goes NeedsLogin (URL gone) → NoState → Starting →
+// Running, one state per read, the way tailscaled picks up a registration
+// headscale already confirmed (issue #20).
+func TestFakeConfirmedLoginPhases(t *testing.T) {
+	f := NewFake()
+	f.SetConfirmPhases(StateNeedsLogin, StateNoState, StateStarting)
+	f.CompleteLoginAfter(1)
+	if _, err := runPlan(t, f, Request{Action: ActionLogout}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPlan(t, f, Request{Action: ActionJoin,
+		LoginServer: DemoLoginServer, LoggedIn: false}); err == nil {
+		t.Fatal("a join without a key should time out waiting for the browser")
+	}
+	var got []string
+	for i := 0; i < 5; i++ {
+		s, err := f.Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := s.Node.BackendState
+		if s.Node.AuthURL != "" {
+			entry += "+url"
+		}
+		got = append(got, entry)
+	}
+	want := []string{"NeedsLogin", "NoState", "Starting", "Running", "Running"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("states = %v, want %v", got, want)
+	}
+}
+
+// A stopped, disabled tailscaled reads like the real one, and the previewed
+// start brings it up logged out (issue #18).
+func TestFakeStoppedDaemonStarts(t *testing.T) {
+	f := NewFake()
+	f.SetDaemonStopped("disabled")
+	s, _ := f.Load(context.Background())
+	if !s.Installed || s.DaemonRunning || s.Daemon() != DaemonDisabled ||
+		!strings.Contains(s.Error, "u starts it") {
+		t.Fatalf("stopped = %+v", s)
+	}
+	if _, err := runPlan(t, f, Request{Action: ActionStartDaemon,
+		DaemonEnabled: s.DaemonEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	// The first read after the start is refused, as a daemon coming up does.
+	if s, _ = f.Load(context.Background()); s.DaemonRunning {
+		t.Errorf("the first read should be refused: %+v", s)
+	}
+	s, _ = f.Load(context.Background())
+	if !s.DaemonRunning || s.LoggedIn() || s.Node.BackendState != StateNeedsLogin {
+		t.Errorf("after the start = %+v", s)
+	}
+}

@@ -323,6 +323,11 @@ func (r *Real) loadControlPlane(ctx context.Context) ControlPlane {
 	// unreadable.
 	cp.ServiceState = r.serviceState(ctx)
 	cp.ServiceEnabled = r.serviceEnabled(ctx)
+	// A deleted configuration or state directory is a fact to say, not a
+	// read error to quote (issue #18).
+	missing := r.missingPaths(ctx, []string{HeadscaleConfigPath, HeadscaleStateDir})
+	cp.ConfigMissing = !cp.Readable && missing[HeadscaleConfigPath]
+	cp.StateDirMissing = missing[HeadscaleStateDir]
 	if cp.Readable {
 		cp.Ownership = r.checkOwnership(ctx, cp)
 	}
@@ -366,6 +371,17 @@ func (r *Real) checkOwnership(ctx context.Context, cp ControlPlane) Ownership {
 		return Ownership{}
 	}
 	return CheckOwnership(cp, stats)
+}
+
+// missingPaths stats the paths, escalated, and reports the ones stat says do
+// not exist. A stat that could not run reports none: unknown is not missing.
+func (r *Real) missingPaths(ctx context.Context, paths []string) map[string]bool {
+	run, err := r.runnerFor("stat", true)
+	if err != nil {
+		return map[string]bool{}
+	}
+	out, _ := run.Read(ctx, StatArgv(paths)...)
+	return MissingPaths(out, paths)
 }
 
 // Stat reads owner, group and mode of each path, escalated. `stat` exits

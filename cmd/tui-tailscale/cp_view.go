@@ -69,6 +69,9 @@ func (a *app) hsInstallLines() []string {
 // cpEmptyMessage is what a control-plane screen shows when it has no rows.
 func (a *app) cpEmptyMessage() string {
 	hs := a.hsState
+	if a.screen == screenDNS && hs.ControlPlane.ConfigMissing {
+		return headscale.ConfigMissingMessage
+	}
 	if a.screen == screenDNS {
 		reason := hs.ControlPlane.Error
 		if reason == "" {
@@ -115,6 +118,10 @@ func (a *app) noteLines() []string {
 		return append(lines, a.theme.Muted.Render(ui.Truncate("dns: section of "+
 			headscale.HeadscaleConfigPath+" · every change is a diff of that file, then a "+
 			"restart", a.width)))
+	case screenKeys:
+		if hasSpentKey(a.hsState.PreAuthKeys) {
+			lines = append(lines, a.theme.Muted.Render(ui.Truncate(spentKeyNote, a.width)))
+		}
 	case screenUsers:
 		for _, line := range a.controlPlanePanel() {
 			lines = append(lines, a.theme.Muted.Render(ui.Truncate(line, a.width)))
@@ -126,13 +133,30 @@ func (a *app) noteLines() []string {
 // readinessLine is the guided half of the control plane: the next missing
 // step, in order, with the key that does it.
 func (a *app) readinessLine() string {
+	if host := a.remoteControlPlane(); host != "" {
+		// Nothing is missing here: this machine is a node, and its control
+		// plane lives on another one.
+		return ui.Truncate(a.theme.Muted.Render("this machine is a node; the control plane is "+
+			host+" · i installs headscale only to run a control plane here"), a.width)
+	}
 	r := headscale.ReadinessFor(a.hsState, time.Now())
+	if r.Next == headscale.NextFirstNode && r.PendingRegistrations == 0 &&
+		a.state.DaemonStartable() {
+		// j cannot join this host while its tailscaled is stopped.
+		r.NextStep = "no node yet · u on the node screen starts tailscaled, then j joins " +
+			"this host (or tailscale up --login-server=<server_url> on another machine)"
+	}
 	style := a.theme.Warn
 	label := "next step  "
 	if r.Next == headscale.NextReady {
 		style, label = a.theme.OK, "readiness  "
 	}
-	return ui.Truncate(a.theme.Muted.Render(label)+style.Render(r.NextStep), a.width)
+	line := a.theme.Muted.Render(label) + style.Render(r.NextStep)
+	if r.Hint != "" {
+		// Not a missing step: a suggestion, after the step and muted.
+		line += a.theme.Muted.Render(" · " + r.Hint)
+	}
+	return ui.Truncate(line, a.width)
 }
 
 // controlPlanePanel renders what /etc/headscale/config.yaml says. It is plain
@@ -142,6 +166,15 @@ func (a *app) controlPlanePanel() []string {
 	lines := []string{"control plane · " + orDash(cp.ConfigPath)}
 	if service := serviceLine(cp); service != "" {
 		lines = append(lines, service)
+	}
+	if cp.StateDirMissing {
+		// Harmless alone, and confusing when unexplained (issue #18).
+		lines = append(lines, "  state dir   "+headscale.HeadscaleStateDir+" is missing · the "+
+			"unit recreates it at the next start")
+	}
+	if cp.ConfigMissing {
+		return append(lines, "  the file is missing · i reinstalls the package, which puts "+
+			"back its example configuration, previewed")
 	}
 	if !cp.Readable {
 		reason := cp.Error
@@ -335,13 +368,44 @@ func (a *app) keysTable() ([]ui.Column, [][]string, []*lipgloss.Style) {
 	keys := a.hsState.PreAuthKeys
 	now := time.Now()
 	rows := make([][]string, 0, len(keys))
+	styles := make([]*lipgloss.Style, 0, len(keys))
 	for _, k := range keys {
 		rows = append(rows, []string{
 			k.ID, orDash(k.User), orDash(k.KeyPrefix),
-			yesNo(k.Reusable), yesNo(k.Used), expiryText(now, k.Expiration),
+			yesNo(k.Reusable), usedText(k), expiryText(now, k.Expiration),
 		})
+		// A key that can no longer register anything reads muted.
+		var style *lipgloss.Style
+		if !k.Usable(now) {
+			s := a.theme.Row.Foreground(a.theme.Muted.GetForeground())
+			style = &s
+		}
+		styles = append(styles, style)
 	}
-	return columns, rows, nil
+	return columns, rows, styles
+}
+
+// usedText is a key's USED cell: a single-use key that registered its machine
+// is "spent", since it can never be used again; a reusable one is only "yes".
+func usedText(k headscale.PreAuthKey) string {
+	if k.Spent() {
+		return "spent"
+	}
+	return yesNo(k.Used)
+}
+
+// spentKeyNote is the keys screen's line when a single-use key is spent.
+const spentKeyNote = "a single-use key is spent by its first join · to join several " +
+	"machines with one key, n creates a reusable one"
+
+// hasSpentKey reports whether any pre-auth key is single-use and spent.
+func hasSpentKey(keys []headscale.PreAuthKey) bool {
+	for _, k := range keys {
+		if k.Spent() {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeStyle colours a node row: online reads OK, expired reads danger.
@@ -362,6 +426,9 @@ func (a *app) nodeStyle(now time.Time, n headscale.Node) *lipgloss.Style {
 func (a *app) cpHelpKeys() []ui.KeyHint {
 	if !a.hsState.Present && !a.loading {
 		return []ui.KeyHint{{Key: "i", Desc: "install headscale"}}
+	}
+	if a.hsState.ControlPlane.ConfigMissing {
+		return []ui.KeyHint{{Key: "i", Desc: "reinstall headscale"}}
 	}
 	switch a.screen {
 	case screenUsers:
@@ -445,10 +512,20 @@ func wordsOrDash(items []string) string {
 // current screen, or "" when that step is not done from here: the readiness
 // line names the step, and the hint bar leads with its key (issue #12).
 func (a *app) nextKey() string {
+	if !a.screen.controlPlane() && a.state.DaemonStartable() {
+		// Nothing on the node's screens works until tailscaled runs.
+		return "u"
+	}
 	if !a.hsState.Present && a.screen.controlPlane() {
 		return "i"
 	}
 	if !a.hsState.Present {
+		return ""
+	}
+	if a.hsState.ControlPlane.ConfigMissing {
+		if a.screen.controlPlane() {
+			return "i"
+		}
 		return ""
 	}
 	r := headscale.ReadinessFor(a.hsState, time.Now())
