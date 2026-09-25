@@ -3,9 +3,11 @@
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-tailscale/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-tailscale)
 
 <!-- stability:start -->
-> **Beta.** The family is days old and still changing. Package names, flags
-> and keys may move without notice until 1.0. Pin versions, and report what
-> breaks.
+> **Stable since v1.0.0.** Keys, flags and the `--check` JSON follow semver:
+> anything new arrives in a minor release, and a removal or a change of meaning
+> waits for the next major, announced one minor before. What stable means: [the
+> family's
+> bar](https://github.com/tui-tools/tui-kit/blob/main/docs/stability.md).
 <!-- stability:end -->
 
 # tui-tailscale
@@ -396,6 +398,16 @@ When OIDC is configured, `oidcReadiness` answers whether a browser login can wor
 
 The `compat` block lists both backends: the tailscale client and headscale, each with its version and whether it is tested.
 
+## Stability
+
+tui-tailscale is stable since 1.0.0 and follows [semver](https://semver.org). What is frozen is the contract a script or a habit can depend on:
+
+- **the keys**: every key on the node, peers and control-plane screens, as the help screen (`?`) lists them;
+- **the flags**: `--demo` (with `--demo=node-only` and `--demo=partial-reset`), `--check`, `--probe-issuer`, `--report`, `--sudo`, `--theme` and `--version`;
+- **the `--check` JSON**: every field name under the top level, `tailscale` and `headscale`, and what each one means, as [`--check`, one read as JSON](#--check-one-read-as-json) describes them.
+
+A minor release only adds: new keys, new flags, new `--check` fields. Removing or renaming one, or changing what it means, happens only in a major release, and the minor release before that major warns about it, on screen and in `--check`. The bar a tool in the family meets to be called stable is in [tui-kit's stability page](https://github.com/tui-tools/tui-kit/blob/main/docs/stability.md).
+
 ## Usage
 
 ```sh
@@ -519,7 +531,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v0.2.1/tui-tailscale_0.2.1_linux_amd64.tar.gz | tar -xz tui-tailscale
+curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v1.0.0/tui-tailscale_1.0.0_linux_amd64.tar.gz | tar -xz tui-tailscale
 sudo install -m0755 tui-tailscale /usr/local/bin/tui-tailscale
 ```
 
