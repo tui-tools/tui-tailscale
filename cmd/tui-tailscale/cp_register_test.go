@@ -95,8 +95,7 @@ func TestRegisterRefusesARegistrationTheIdPRefused(t *testing.T) {
 		RefusedBy: "allowed_groups"}}
 	a.setScreen(screenNodes)
 	view := ansi.Strip(a.View())
-	if !strings.Contains(view, "refused by the identity provider's policy: 1 node") ||
-		!strings.Contains(view, "not in allowed_groups") {
+	if !strings.Contains(view, "refused by the identity provider's policy (not in allowed_groups): 1 node") {
 		t.Errorf("the refusal is not shown:\n%s", view)
 	}
 	if strings.Contains(view, "waiting to register") {

@@ -164,7 +164,7 @@ When the client is installed but tailscaled is stopped or disabled (after `syste
 
 When `tailscale` is absent, the node screen says how to install it on this distribution (read from `/etc/os-release`), and `i` previews and runs exactly those commands — Tailscale's documented package-manager steps, never its `curl | sh` script:
 
-- **Ubuntu and Debian**: Tailscale's signing key and apt source list for the release's codename, fetched from pkgs.tailscale.com into `/usr/share/keyrings` and `/etc/apt/sources.list.d`, then `apt-get update` and `apt-get install -y tailscale`. Every `apt-get` step runs as `env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get …`, and the preview shows it: Ubuntu server images run needrestart after each apt transaction, and without that environment its debconf prompt waits for an answer nobody can give while the TUI owns the terminal.
+- **Ubuntu and Debian**: Tailscale's signing key and apt source list for the release's codename, fetched from pkgs.tailscale.com into `/usr/share/keyrings` and `/etc/apt/sources.list.d`, then `apt-get update` and `apt-get install -y tailscale`. Every `apt-get` step runs as `env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get …`, and the preview shows it: Ubuntu server images run needrestart after each apt transaction, and a debconf question (needrestart's, or a package's) does not need the command's input and output to be a terminal: it finds the one the tool runs in, or the pseudo-terminal sudo's `use_pty` gives the command, and waits there for an answer nobody can give while the TUI owns the screen. With `DEBIAN_FRONTEND=noninteractive` debconf takes the defaults instead, and `NEEDRESTART_MODE=a` restarts the services still running replaced libraries, as Ubuntu server does unattended.
 - **Fedora** (and the RHEL rebuilds): Tailscale's `.repo` file fetched into `/etc/yum.repos.d` — the file `dnf config-manager --add-repo` would add, written in the way that works with both dnf4 and dnf5 — then `dnf install -y tailscale`.
 - **Arch**: `pacman -Syu --needed --noconfirm tailscale`. Arch supports no partial upgrade, so refreshing the package database to install one package upgrades the machine with it; the dialog says so.
 - **Omarchy**: `pacman -S --needed --noconfirm tailscale`. Omarchy upgrades the machine only through `omarchy update` (a pacman hook refuses a direct `-Syu`), so the package is installed against the database the last update synced, without `-y`, which is not a partial upgrade; if pacman cannot find the file, `omarchy update` first.
@@ -535,7 +535,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v1.0.0/tui-tailscale_1.0.0_linux_amd64.tar.gz | tar -xz tui-tailscale
+curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v1.0.1/tui-tailscale_1.0.1_linux_amd64.tar.gz | tar -xz tui-tailscale
 sudo install -m0755 tui-tailscale /usr/local/bin/tui-tailscale
 ```
 

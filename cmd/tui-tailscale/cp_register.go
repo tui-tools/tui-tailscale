@@ -83,9 +83,10 @@ func (a *app) registrationLines() []string {
 	}
 	if len(refused) > 0 {
 		newest := refused[0]
-		line := "refused by the identity provider's policy: " + pluralCount(len(refused), "node") +
-			" · newest " + newest.AuthID + " (" + newest.RefusedReason() + ")" + registrationAge(newest) +
-			" · R will not register it"
+		// The reason leads: on a narrow terminal it is what must survive.
+		line := "refused by the identity provider's policy (" + newest.RefusedReason() + "): " +
+			pluralCount(len(refused), "node") + " · R will not register it · newest " +
+			newest.AuthID + registrationAge(newest)
 		lines = append(lines, a.theme.Danger.Render(ui.Truncate(line, a.width)))
 	}
 	return lines
