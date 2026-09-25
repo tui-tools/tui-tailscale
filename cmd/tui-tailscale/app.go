@@ -69,6 +69,13 @@ const (
 	inputOIDCGroups
 	inputOIDCUsers
 	inputOIDCScope
+	// The dns screen's inputs.
+	inputDNSBase
+	inputDNSGlobal
+	inputDNSSearch
+	inputDNSSplitDomain
+	inputDNSSplitServers
+	inputDNSRecord
 )
 
 // pickerPurpose records what an open picker is choosing.
@@ -93,6 +100,10 @@ const (
 	pickerACMEChallenge
 	// The OIDC form's first step: which identity provider.
 	pickerOIDCProvider
+	// The dns screen's switches, and what n adds there.
+	pickerDNSMagic
+	pickerDNSOverride
+	pickerDNSNew
 )
 
 // pickerYes and pickerNo are the two options of a boolean picker; noExitNode
@@ -177,6 +188,8 @@ type app struct {
 
 	// cpDraft collects the control-plane forms' answers across their steps.
 	cpDraft controlPlaneDraft
+	// dnsDraft is the dns section as the open dns step would leave it.
+	dnsDraft dnsDraft
 	// after, when set, runs once on the next successful control-plane
 	// command. It is how the control plane's multi-step flows chain — the
 	// secret, then config.yaml, then the restart — each step its own confirm.
@@ -714,7 +727,8 @@ func acceptsEmpty(purpose inputPurpose) bool {
 	switch purpose {
 	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes, inputSaveProfile,
 		inputOIDCDomains, inputOIDCGroups, inputOIDCUsers, inputOIDCSecret,
-		inputACMEEmail, inputBaseDomain, inputApproveRoutes:
+		inputACMEEmail, inputBaseDomain, inputApproveRoutes,
+		inputDNSBase, inputDNSGlobal, inputDNSSearch, inputDNSSplitServers, inputDNSRecord:
 		return true
 	}
 	return false
@@ -773,6 +787,12 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.tookChallenge(choice)
 	case pickerOIDCProvider:
 		return a, a.tookOIDCProvider(choice)
+	case pickerDNSMagic:
+		return a, a.tookDNSMagic(choice == pickerYes)
+	case pickerDNSOverride:
+		return a, a.tookDNSOverride(choice == pickerYes)
+	case pickerDNSNew:
+		return a, a.tookDNSNew(choice)
 	}
 	return a, nil
 }
@@ -1249,6 +1269,8 @@ func (a *app) rowCount() int {
 		return len(a.hsState.Nodes)
 	case screenKeys:
 		return len(a.hsState.PreAuthKeys)
+	case screenDNS:
+		return len(a.dnsRows())
 	}
 	return 0
 }

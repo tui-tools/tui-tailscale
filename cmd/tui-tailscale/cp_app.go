@@ -26,6 +26,8 @@ const (
 	screenNodes
 	// screenKeys lists headscale's pre-authentication keys.
 	screenKeys
+	// screenDNS is headscale's dns: section, one row per setting.
+	screenDNS
 	// screenCount is the number of screens: it drives the tab bar and the
 	// per-screen cursor arrays.
 	screenCount
@@ -42,6 +44,8 @@ func (s screen) title() string {
 		return "nodes"
 	case screenKeys:
 		return "preauth keys"
+	case screenDNS:
+		return "dns"
 	}
 	return "node"
 }
@@ -111,6 +115,8 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 			a.input.Payload = node.ID
 			return nil
 		}
+	case screenDNS:
+		return a.handleDNSKey(key)
 	case screenKeys:
 		if key == "n" {
 			if !a.headscaleAnswers() {

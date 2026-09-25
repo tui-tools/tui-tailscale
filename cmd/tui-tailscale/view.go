@@ -349,7 +349,7 @@ func (a *app) defaultStatus() string {
 	switch a.screen {
 	case screenPeers:
 		return strconv.Itoa(len(a.state.Peers)) + " peers  ·  ? for help"
-	case screenUsers, screenNodes, screenKeys:
+	case screenUsers, screenNodes, screenKeys, screenDNS:
 		return strconv.Itoa(a.rowCount()) + " rows  ·  every change is previewed and " +
 			"confirmed  ·  ? for help"
 	}
@@ -550,6 +550,8 @@ func helpKeys() []ui.KeyHint {
 		ui.KeyHint{Key: "F", Desc: "fix the ownership of headscale's files (users)"},
 		ui.KeyHint{Key: "r", Desc: "approve or revoke a node's advertised routes (nodes)"},
 		ui.KeyHint{Key: "e / m / x", Desc: "expire / rename / delete the selected node (nodes)"},
+		ui.KeyHint{Key: "e / n / x", Desc: "edit the selected setting / add a split domain or a"},
+		ui.KeyHint{Key: "", Desc: "record / remove it (dns): a diff of config.yaml, then a restart"},
 		ui.KeyHint{Key: "", Desc: ""},
 		ui.KeyHint{Key: "note", Desc: "every change is previewed and confirmed first; a pre-auth"},
 		ui.KeyHint{Key: "", Desc: "key or client secret is typed masked, never on a command line"},

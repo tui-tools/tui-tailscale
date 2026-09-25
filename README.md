@@ -133,6 +133,7 @@ What tui-tailscale does own is the *configuration* of that identity: `S` and `O`
 - **users** — the Headscale users, and the provider they authenticate against, under a panel showing what `/etc/headscale/config.yaml` says: `server_url`, `listen_addr`, `dns.base_domain`, the transport and the OIDC redirect URI it implies, the OIDC issuer and client id, whether a client secret is set, the allow lists, and the state of the `headscale` unit: active or not, enabled at boot or not, the account it runs as, and whether that account owns its state files. `n` creates a user; `S` and `O` configure the control plane; `F` fixes the ownership of headscale's files.
 - **nodes** — the machines registered with Headscale, who owns each, key expiry, and the routes each advertises with whether they are approved. `r` approves or revokes routes, `e` expires a node, `m` renames one, `x` deletes one (`ctrl+r` reloads here, since `r` is taken).
 - **preauth keys** — the keys that let a machine register itself, shown by prefix only. `n` creates one, shown exactly once.
+- **dns** — headscale's `dns:` section, one row per setting, split domain and extra record. See [DNS](#dns-the-dns-screen).
 
 ![The control plane: the readiness line, the panel, and the users](docs/screenshots/tui-tailscale-users.png)
 
@@ -274,6 +275,20 @@ headscale nodes approve-routes --identifier <id> --routes 10.0.0.0/16,0.0.0.0/0,
 ```
 
 A revocation is a danger dialog, and revoking everything is written `--routes=` so the empty value is visible. (`headscale routes` no longer exists since 0.26; the field names were checked against headscale 0.29.3's own output: `available_routes`, `approved_routes`, `subnet_routes`.) `--check` reports each node's routes as counts, `nodeRoutes` with `advertised`, `approved`, `pending` and `exitNode`, never the networks themselves.
+
+### DNS (the dns screen)
+
+What nodes resolve, and how, lives in headscale's `dns:` section, and the dns screen edits all of it without opening `config.yaml`: MagicDNS and `base_domain`, `override_local_dns`, the global nameservers, split nameservers per domain (a private network's own resolver for its internal domain only, `169.254.169.254` for `oraclevcn.com` on an OCI VCN, say), the search domains, and the extra records headscale answers itself. `e` edits the selected row, `n` adds a split domain or a record, `x` removes the selected one.
+
+Each change goes through the same splice writer as `S` and `O`: the confirm shows the lines of `config.yaml` that change and nothing else, the rest of the file (headscale's commented-out examples below `split: {}` included) is kept byte for byte, and the restart follows as its own confirm. Lists and maps are written in YAML flow style on the key's own line, so adding a split domain is one line of diff:
+
+```yaml
+    split: {"corp.example.com": ["10.0.0.2"], "oraclevcn.com": ["169.254.169.254"]}
+```
+
+Every edit is proven before it is shown: the edited file is read back, and what headscale would read has to be exactly what the form asked for; a `dns:` section written in a shape the splice cannot edit safely (in flow style, say) is refused rather than rewritten. The checks are headscale's own: `base_domain` is required while MagicDNS is on and must not contain the `server_url` host, a nameserver is an IP address or an `https://` DNS-over-HTTPS URL, a split domain needs at least one nameserver, and a record is `name type address` with A or AAAA only (headscale's own configuration notes that only those reach a Tailscale client, so a CNAME would be written and never answered). A record outside `base_domain` is allowed, with a note. While `extra_records_path` is set, the records come from that file and are not edited here.
+
+`--check` reports the section as `dns` in `controlPlane`: the two switches and how many global nameservers, split domains, search domains and records there are, never the names and addresses themselves.
 
 ### Node rename and delete (`m` / `x`)
 

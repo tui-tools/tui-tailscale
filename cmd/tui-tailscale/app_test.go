@@ -345,7 +345,7 @@ func TestViewsRenderAtEveryWidth(t *testing.T) {
 	a, _ := newTestApp(t)
 	for _, width := range []int{40, 80, 120} {
 		a.width = width
-		for _, screen := range []string{"1", "2", "3", "4", "5"} {
+		for _, screen := range []string{"1", "2", "3", "4", "5", "6"} {
 			press(t, a, screen)
 			if out := a.View(); out == "" {
 				t.Errorf("empty view at %d columns", width)

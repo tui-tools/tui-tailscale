@@ -69,6 +69,13 @@ func (a *app) hsInstallLines() []string {
 // cpEmptyMessage is what a control-plane screen shows when it has no rows.
 func (a *app) cpEmptyMessage() string {
 	hs := a.hsState
+	if a.screen == screenDNS {
+		reason := hs.ControlPlane.Error
+		if reason == "" {
+			reason = "it could not be read"
+		}
+		return headscale.HeadscaleConfigPath + " is not readable (" + reason + ") · run with sudo"
+	}
 	switch {
 	case hs.NotRunning:
 		// Nothing failed: the CLI was not asked, because the unit is stopped.
@@ -103,6 +110,10 @@ func (a *app) noteLines() []string {
 			return append(lines, note, a.theme.Muted.Render(ui.Truncate(routes, a.width)))
 		}
 		return append(lines, note)
+	case screenDNS:
+		return append(lines, a.theme.Muted.Render(ui.Truncate("dns: section of "+
+			headscale.HeadscaleConfigPath+" · every change is a diff of that file, then a "+
+			"restart", a.width)))
 	case screenUsers:
 		for _, line := range a.controlPlanePanel() {
 			lines = append(lines, a.theme.Muted.Render(ui.Truncate(line, a.width)))
@@ -258,6 +269,8 @@ func (a *app) cpTableData() ([]ui.Column, [][]string, []*lipgloss.Style) {
 		return a.nodesTable()
 	case screenKeys:
 		return a.keysTable()
+	case screenDNS:
+		return a.dnsTable()
 	}
 	return a.usersTable()
 }
@@ -360,6 +373,9 @@ func (a *app) cpHelpKeys() []ui.KeyHint {
 			{Key: "x", Desc: "delete"}}
 	case screenKeys:
 		return []ui.KeyHint{{Key: "n", Desc: "new key"}}
+	case screenDNS:
+		return []ui.KeyHint{{Key: "e", Desc: "edit"}, {Key: "n", Desc: "add"},
+			{Key: "x", Desc: "remove"}}
 	}
 	return nil
 }

@@ -113,6 +113,13 @@ oidc:
 dns:
   magic_dns: true
   base_domain: tailnet.example.com
+  override_local_dns: true
+  nameservers:
+    global: ["1.1.1.1", "1.0.0.1"]
+    # The office network's names resolve through its own resolver.
+    split: {"corp.example.com": ["10.0.0.2"]}
+  search_domains: ["tailnet.example.com"]
+  extra_records: [{name: "grafana.tailnet.example.com", type: "A", value: "100.64.0.3"}]
 
 log:
   level: info
