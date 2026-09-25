@@ -167,7 +167,7 @@ func TestCheckWithoutHeadscale(t *testing.T) {
 		t.Errorf("install = %+v", hs.Install)
 	}
 	if got := strings.Join(hs.Install.Commands, "\n"); !strings.Contains(got,
-		"sudo apt-get install -y headscale") || !strings.Contains(got, "pkgs.tui.tools/pubkey.asc") {
+		"sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y headscale") || !strings.Contains(got, "pkgs.tui.tools/pubkey.asc") {
 		t.Errorf("commands = %s", got)
 	}
 }

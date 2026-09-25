@@ -418,7 +418,9 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	argv := cmd.Argv
+	// An apt-get step runs under env (issue #23): the fake applies what it
+	// wraps.
+	argv := withoutEnv(cmd.Argv)
 	switch {
 	case len(argv) == 5 && argv[0] == "headscale" && argv[1] == "nodes" && argv[2] == "expire":
 		return f.expireNode(argv[4])

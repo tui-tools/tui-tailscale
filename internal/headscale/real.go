@@ -53,7 +53,9 @@ var searchPaths = map[string][]string{
 	// add the tui-tools repository — gpg reads the downloaded key back and
 	// dearmours it, chmod and tee write the keyring and the repository file,
 	// rpm and pacman-key import the key.
-	"apt-get":    {"/usr/bin/apt-get", "/bin/apt-get"},
+	"apt-get": {"/usr/bin/apt-get", "/bin/apt-get"},
+	// env runs apt-get with the non-interactive environment (install.go).
+	"env":        {"/usr/bin/env", "/bin/env"},
 	"dnf":        {"/usr/bin/dnf", "/bin/dnf"},
 	"rpm":        {"/usr/bin/rpm", "/bin/rpm"},
 	"pacman":     {"/usr/bin/pacman", "/bin/pacman"},
@@ -125,6 +127,7 @@ var timeouts = map[string]time.Duration{
 	// sits on a network file system; it bounds its own read at a minute.
 	"tui-cert": 70 * time.Second,
 	"apt-get":  10 * time.Minute,
+	"env":      10 * time.Minute,
 	"dnf":      10 * time.Minute,
 	"rpm":      2 * time.Minute,
 	"pacman":   10 * time.Minute,

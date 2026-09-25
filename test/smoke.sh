@@ -147,7 +147,7 @@ else
         "pkgs\\.tailscale\\.com/stable/[a-z]+/${codename}\\.tailscale-keyring\\.list"
       check "check gives the apt install" \
         "$bin --check" \
-        'sudo apt-get install -y tailscale'
+        'sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y tailscale'
       ;;
     dnf)
       check "check gives the dnf repository file" \

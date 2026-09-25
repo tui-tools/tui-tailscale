@@ -202,7 +202,7 @@ func buildInstall(d pkgmgr.Distro, repo RepoState, pkg string) (Plan, error) {
 			"supports no partial upgrade, upgrades the rest of the machine along with it (-Syu).")
 	}
 	plan.Body = strings.Join(body, "\n\n")
-	return plan, nil
+	return withAptEnv(plan), nil
 }
 
 // BuildReinstall assembles the reinstall that puts back a deleted
@@ -247,7 +247,50 @@ func BuildReinstall(d pkgmgr.Distro) (Plan, error) {
 	body = append(body, "The restored file is the package's example, with placeholders: S "+
 		"configures it next, and ends with the start.")
 	plan.Body = strings.Join(body, "\n\n")
-	return plan, nil
+	return withAptEnv(plan), nil
+}
+
+// aptEnv is the environment every apt-get step runs with (issue #23). Ubuntu
+// server images run needrestart after each apt transaction, and with TERM set
+// and no DEBIAN_FRONTEND debconf picks an interactive frontend nobody can
+// answer while the TUI owns the terminal: the install hangs after the
+// package is already configured. The kit's apt steps get the same
+// environment in a later release; until this tool is on it, the steps it runs
+// carry it here, through env so the preview shows it.
+var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a"}
+
+// nonInteractive runs an apt-get step under aptEnv; any other step is left as
+// it is.
+func nonInteractive(cmd runner.Command) runner.Command {
+	if len(cmd.Argv) == 0 || cmd.Argv[0] != "apt-get" {
+		return cmd
+	}
+	argv := append(append([]string{"env"}, aptEnv...), cmd.Argv...)
+	cmd.Argv = argv
+	return cmd
+}
+
+// withAptEnv is a plan whose apt-get steps run under aptEnv.
+func withAptEnv(plan Plan) Plan {
+	steps := make([]runner.Command, len(plan.Steps))
+	for i, step := range plan.Steps {
+		steps[i] = nonInteractive(step)
+	}
+	plan.Steps = steps
+	return plan
+}
+
+// withoutEnv is argv with a leading `env VAR=value …` taken off: the command
+// the environment wraps.
+func withoutEnv(argv []string) []string {
+	if len(argv) == 0 || argv[0] != "env" {
+		return argv
+	}
+	i := 1
+	for i < len(argv) && strings.Contains(argv[i], "=") && !strings.HasPrefix(argv[i], "-") {
+		i++
+	}
+	return argv[i:]
 }
 
 // fromPkgmgr turns a kit package-manager command into the runner command this

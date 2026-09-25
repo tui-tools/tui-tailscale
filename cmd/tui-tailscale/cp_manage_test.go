@@ -266,7 +266,7 @@ func TestInstallHeadscaleFromAControlPlaneScreen(t *testing.T) {
 	for _, want := range []string{
 		"sudo -n install -d -m 0755 /etc/apt/keyrings",
 		"gpg --show-keys --with-colons /etc/apt/keyrings/tui-tools.asc",
-		"sudo -n apt-get install -y headscale"} {
+		"sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y headscale"} {
 		if !strings.Contains(a.confirm.Command, want) {
 			t.Errorf("the preview is missing %q:\n%s", want, a.confirm.Command)
 		}

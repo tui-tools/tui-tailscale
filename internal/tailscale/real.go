@@ -22,8 +22,10 @@ var searchPaths = map[string][]string{
 	"sysctl":  {"/usr/sbin/sysctl", "/sbin/sysctl", "/usr/bin/sysctl"},
 	// The companion install: curl fetches Tailscale's repository files, the
 	// package manager installs, systemctl starts the daemon.
-	"curl":      {"/usr/bin/curl", "/bin/curl"},
-	"apt-get":   {"/usr/bin/apt-get", "/bin/apt-get"},
+	"curl":    {"/usr/bin/curl", "/bin/curl"},
+	"apt-get": {"/usr/bin/apt-get", "/bin/apt-get"},
+	// env runs apt-get with the non-interactive environment (install.go).
+	"env":       {"/usr/bin/env", "/bin/env"},
 	"dnf":       {"/usr/bin/dnf", "/bin/dnf"},
 	"pacman":    {"/usr/bin/pacman", "/bin/pacman"},
 	"systemctl": {"/usr/bin/systemctl", "/bin/systemctl"},
@@ -41,6 +43,7 @@ var timeouts = map[string]time.Duration{
 	"tailscale": 45 * time.Second,
 	"curl":      2 * time.Minute,
 	"apt-get":   10 * time.Minute,
+	"env":       10 * time.Minute,
 	"dnf":       10 * time.Minute,
 	"pacman":    10 * time.Minute,
 	"systemctl": time.Minute,

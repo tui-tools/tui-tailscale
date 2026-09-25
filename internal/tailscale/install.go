@@ -118,6 +118,33 @@ var codenamePattern = regexp.MustCompile(`^[a-z]{2,32}$`)
 // tool has no plan for.
 const ManualInstallURL = "https://tailscale.com/download/linux"
 
+// aptEnv is the environment every apt-get step runs with (issue #23). Ubuntu
+// server images run needrestart after each apt transaction, and with TERM set
+// and no DEBIAN_FRONTEND debconf picks an interactive frontend nobody can
+// answer while the TUI owns the terminal: the install hangs after the
+// package is already configured. It goes through env so the preview shows
+// it.
+var aptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a"}
+
+// nonInteractive runs an apt-get step under aptEnv.
+func nonInteractive(cmd runner.Command) runner.Command {
+	cmd.Argv = append(append([]string{"env"}, aptEnv...), cmd.Argv...)
+	return cmd
+}
+
+// withoutEnv is argv with a leading `env VAR=value …` taken off: the command
+// the environment wraps.
+func withoutEnv(argv []string) []string {
+	if len(argv) == 0 || argv[0] != "env" {
+		return argv
+	}
+	i := 1
+	for i < len(argv) && strings.Contains(argv[i], "=") && !strings.HasPrefix(argv[i], "-") {
+		i++
+	}
+	return argv[i:]
+}
+
 // buildInstall assembles the install plan for a distribution.
 func buildInstall(d Distro) (Plan, error) {
 	enable := runner.Command{
@@ -141,8 +168,10 @@ func buildInstall(d Distro) (Plan, error) {
 				base + ".noarmor.gpg"}, Description: "Add Tailscale's signing key"},
 			{Argv: []string{"curl", "-fsSL", "-o", "/etc/apt/sources.list.d/tailscale.list",
 				base + ".tailscale-keyring.list"}, Description: "Add Tailscale's apt repository"},
-			{Argv: []string{"apt-get", "update"}, Description: "Refresh the package lists"},
-			{Argv: []string{"apt-get", "install", "-y", "tailscale"}, Description: "Install tailscale"},
+			nonInteractive(runner.Command{Argv: []string{"apt-get", "update"},
+				Description: "Refresh the package lists"}),
+			nonInteractive(runner.Command{Argv: []string{"apt-get", "install", "-y", "tailscale"},
+				Description: "Install tailscale"}),
 			enable,
 		}
 	case pkgmgr.ManagerDNF:
