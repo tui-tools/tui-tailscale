@@ -2,9 +2,11 @@
 
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-tailscale/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-tailscale)
 
+<!-- stability:start -->
 > **Beta.** The family is days old and still changing. Package names, flags
 > and keys may move without notice until 1.0. Pin versions, and report what
 > breaks.
+<!-- stability:end -->
 
 # tui-tailscale
 
@@ -24,7 +26,7 @@ It manages as well as reads. Every change is shown as the exact command line fir
 tui-tailscale --demo
 ```
 
-`--demo` runs every screen against one sample tailnet, both ends of it: a fake node joined to `https://headscale.example.com`, with two peers — `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet — and the fake control plane that serves them, where the node is registered under `user@example.com` and `office-router` advertises a second subnet nobody approved yet, so `r` has something to approve; a laptop waits to register, so `R` has one to register; the DNS section carries a split domain and an extra record; two join profiles pre-fill `j`, and a login server under `.internal` (`https://headscale.lab.internal`) walks the private-CA step. Its unit runs but is disabled, the way a fresh install is usually left, so the readiness line and the end of `S` and `O` show the enable. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
+`--demo` runs every screen against one sample tailnet, both ends of it: a fake node joined to `https://headscale.example.com`, with two peers — `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet — and the fake control plane that serves them, where the node is registered under `user@example.com` and `office-router` advertises a second subnet nobody approved yet, so `r` has something to approve; a laptop waits to register, so `R` has one to register; the DNS section carries a split domain and an extra record; two join profiles pre-fill `j`, and a login server under `.internal` (`https://headscale.lab.internal`) walks the private-CA step; the demo's tui-cert keeps a local CA and a pair it issued, so `S`'s own-certificate step and the CA step list them, and the file picker browses a made-up tree. Its unit runs but is disabled, the way a fresh install is usually left, so the readiness line and the end of `S` and `O` show the enable. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
 
 ## Screens
 
@@ -61,11 +63,24 @@ This is the path validated end to end on a real Ubuntu 24.04 host, with Google a
 
 ## Private tailnet
 
-A tailnet with no public DNS name and no Let's Encrypt: headscale on https with a certificate from a local certificate authority (tui-cert issues one), clients that trust that CA, and the host's ports opened by tui-firewall (a cloud image's INPUT chain usually ends in REJECT). The names are examples: `headscale.lab.internal` for the control plane, `/etc/tui-cert/ca.crt` for the CA's certificate.
+A tailnet with no public DNS name and no Let's Encrypt: headscale on https with a certificate from a local certificate authority, clients that trust that CA, and the host's ports opened by tui-firewall (a cloud image's INPUT chain usually ends in DROP or REJECT). [tui-cert](https://tui.tools/tools/tui-cert/) runs the CA; tui-tailscale reads what it issued, so no path is typed. The names are examples: `vpn.internal` and `192.0.2.10` for the control plane, `homelab-ca` for the CA.
 
-1. **Serve the certificate.** `S` on the users screen, transport *own certificate*, and the paths of the certificate and key tui-cert issued for `headscale.lab.internal` (checked from this machine: the account headscale runs as has to be able to read both).
-2. **Open the ports.** The readiness line reads the host firewall and says when `443/tcp` (the control plane) is closed, and whether `41641/udp` (the node's direct connections) is; `f` hands the terminal to tui-firewall to open them, and they are read again when it exits. See [the ports step](#the-next-step).
-3. **Join, trusting the CA.** `j` checks the login server's certificate against this machine's trust store before it runs `tailscale up`. When it does not verify, the join says so and asks for the CA's certificate: typed as a path, previewed as the distribution's own way of adding a trust anchor, then the join goes on:
+On the control plane:
+
+1. **Install headscale.** In tui-tailscale, the users screen (`3`), `i`. It comes first because the package creates the `headscale` account the certificate is handed to.
+2. **Create a CA.** In tui-cert, the local CAs screen (`5`), `N`: a name (`homelab-ca`), the key type and the validity. The key stays on this machine, mode 600.
+3. **Issue the control plane's certificate.** `e` on that CA: common name `vpn.internal`, other names `192.0.2.10` (clients that connect by address need the IP SAN), and owner `headscale:headscale`, so the service can read the pair. It lands in `/etc/tui-cert/issued/vpn.internal/` as `fullchain.pem` and `privkey.pem`.
+4. **Serve the certificate.** `S`, transport *own certificate*, `server_url` `https://vpn.internal` (or `https://192.0.2.10`), `listen_addr` `0.0.0.0:443`. The next step lists the pairs tui-cert issued, by CA, name and expiry:
+
+   ![The pairs tui-cert issued, offered by S](docs/screenshots/tui-tailscale-pairs.png)
+
+   Picking one takes both paths at once, and the form checks from this machine that `headscale` can read them before anything is written. `other file…` opens a file picker for a pair from anywhere else. Then `dns.base_domain` (`tailnet.internal`), the diff, and the enable.
+5. **Skip `O`, use keys.** No identity provider is needed: `n` on the users screen creates a user, and `n` on the preauth keys screen (`5`) a key for it (`1 reusable 2h`, say), shown once.
+
+On each client:
+
+6. **Copy the CA certificate.** tui-cert's `x` on the control plane shows the one line that copies it, the certificate only, to the same place on the client (`/etc/tui-cert/ca/homelab-ca/ca.crt`), and the fingerprint to compare.
+7. **Install tailscale and join.** In tui-tailscale, `i`, then `j` with `https://vpn.internal` and the key. The join checks the login server's certificate against this machine's trust store before it runs `tailscale up`. When it does not verify, it offers the CAs tui-cert keeps on this machine, or opens a file picker in `/etc/tui-cert/ca`; the CA picked is previewed as the distribution's own way of adding a trust anchor, then the join goes on:
 
    | Distribution | Trust step |
    | --- | --- |
@@ -76,6 +91,12 @@ A tailnet with no public DNS name and no Let's Encrypt: headscale on https with 
    ![The CA step of a join](docs/screenshots/tui-tailscale-trust.png)
 
    Each ends with `systemctl restart tailscaled`, because a running daemon keeps the roots it loaded at start. The dialog says what trusting a CA means: every program on the machine that uses the system trust store trusts what it signs. A certificate that is trusted but issued for another name is reported as such, since no CA fixes it.
+
+Back on the control plane:
+
+8. **Open the ports.** The readiness line reads the host firewall and says when the control port (`443/tcp`, the port headscale listens on) is closed, and whether `41641/udp` (the nodes' direct connections) is; `f` hands the terminal to tui-firewall to open them, and they are read again when it exits. See [the ports step](#the-next-step). With the firewall closed a client cannot reach the control plane at all, so on a fresh host this comes before the first join.
+
+This path was run end to end in the family lab on two Ubuntu guests (26.04 as the control plane, 24.04 as the client), with the certificate issued for an IP SAN and the client reaching the control plane by that address.
 
 ## Manage, not view
 
@@ -172,7 +193,7 @@ A control plane comes up in an order, and each step only makes sense once the on
 | install | the `headscale` binary is here | `i` installs it |
 | server | `server_url` is set, valid and not loopback, and `dns.base_domain` is one headscale will start with | `S` sets the transport, `server_url` and `base_domain` |
 | unit | the unit is running, and enabled at boot | how to start it, or that `S` and `O` end with the enable |
-| ports | the host firewall lets new connections reach the `server_url` port (443/tcp for https) | `443/tcp is closed in the host firewall` — `f` opens tui-firewall |
+| ports | the host firewall lets new connections reach the control port: the port in `listen_addr` when headscale binds a public address (a NAT or port forward in front of the host can give clients another one in `server_url`), the `server_url` port behind a reverse proxy | `443/tcp is closed in the host firewall` — `f` opens tui-firewall |
 | identity | OIDC is configured, or a pre-auth key can still register a machine | `O` sets up an identity provider, or `n` on the keys screen creates a key |
 | first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine; when a node is already waiting for its login, `R` on the nodes screen registers it |
 | routes | no advertised route waits for approval | `routes pending approval (N)` — `r` on the nodes screen |
@@ -215,7 +236,7 @@ Pick the owning user by id and optionally add the words `reusable`, `ephemeral` 
 
 Every transport ends with **`dns.base_domain`**, the MagicDNS domain nodes are named under. It is checked the way headscale checks it at startup: a valid DNS name, required while `dns.magic_dns` is on, and not a suffix of the `server_url` host (MagicDNS owns every name under it, so clients could not reach the control plane, and headscale refuses to start).
 
-A refused answer reopens its own step with the reason on top and what you typed still in it.
+A refused answer reopens its own step with the reason on top and what you typed (or picked) still in it.
 
 **The host is checked, not only the characters.** headscale does not validate the host of `server_url`, so a public IP typed with one digit too many (`http://203.0.113.1000:443`) used to be written and served, and every client then failed on a DNS lookup for a name that looks like an address. A host has to be an IP address that parses, or a DNS name whose last label is not all digits (no top-level domain is numeric). The same check applies to `listen_addr`'s address part and to the OIDC issuer, and a malformed value already in the file is flagged in the panel and shown with its problem when `S` proposes it.
 
@@ -223,7 +244,9 @@ A refused answer reopens its own step with the reason on top and what you typed 
 
 The painless case, a server reached by IP: pick **plain http**, type `http://203.0.113.10:443`, accept the proposed `0.0.0.0:443`, and give a private base domain such as `tailnet.internal`. The diff is three lines.
 
-**An own certificate is checked before it is written.** The form `stat`s the certificate, the key and every directory above them from this machine, and refuses a pair the account headscale runs as cannot reach, naming the file or directory in the way. The pair [tui-cert](https://github.com/tui-tools/tui-cert) issues lives in its root-only `/etc/ssl/tui-cert`, which a `headscale` user cannot enter: its install step copies the pair wherever the service can read it. A path under `/home` or `/tmp` gets a warning, because the packaged unit hides those trees from the service. [tui-firewall](https://github.com/tui-tools/tui-firewall) opens the port, or port 80 for `HTTP-01`.
+**An own certificate is offered, then checked before it is written.** When [tui-cert](https://tui.tools/tools/tui-cert/) is installed, the step after `listen_addr` lists the pairs its local CAs issued (read from `tui-cert --check`, unprivileged), each as `issued by <ca> · <name> (<other names>) · expires <date>`, and picking one takes the certificate and its key together. `other file…`, or a machine without tui-cert (the help then says where tui-cert comes from), opens the kit's file picker instead: a directory listing that lists `.pem` and `.crt` for the certificate, `.pem` and `.key` for the key, opens where the current value is, and takes a typed or pasted path too. Either way the form `stat`s the certificate, the key and every directory above them from this machine, and refuses a pair the account headscale runs as cannot reach, naming the file or directory in the way; the picker reopens with the reason on top. tui-cert's `e` hands the pair to `headscale:headscale` when it issues it. A path under `/home` or `/tmp` gets a warning, because the packaged unit hides those trees from the service. [tui-firewall](https://github.com/tui-tools/tui-firewall) opens the port, or port 80 for `HTTP-01`.
+
+![The file picker, for a pair from elsewhere](docs/screenshots/tui-tailscale-certfile.png)
 
 The confirm dialog shows a **diff of the changed lines and nothing else** (a value already in the file, however it is quoted, is not a change), then the write, then the step that makes headscale read it as a separate, optional confirm (see [The last step: restart, or enable](#the-last-step-restart-or-enable)).
 
@@ -486,7 +509,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v0.1.0/tui-tailscale_0.1.0_linux_amd64.tar.gz | tar -xz tui-tailscale
+curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v0.2.0/tui-tailscale_0.2.0_linux_amd64.tar.gz | tar -xz tui-tailscale
 sudo install -m0755 tui-tailscale /usr/local/bin/tui-tailscale
 ```
 
