@@ -582,6 +582,11 @@ func (d *demoProcess) String() string { return d.name }
 // `tailscale up --login-server` and has not logged in yet.
 const DemoAuthID = "hskey-authreq-DemoLaptopWaiting0001"
 
+// DemoRefusedAuthID is the registration whose browser login the demo's
+// identity provider policy refused: still in headscale's cache, and not
+// something R may finish.
+const DemoRefusedAuthID = "hskey-authreq-DemoRefusedByIdP0002"
+
 // SetNodes replaces the registered nodes, so a test can start from a control
 // plane with none.
 func (f *Fake) SetNodes(nodes []Node) {
@@ -814,8 +819,14 @@ func demoState() State {
 				ApprovedRoutes:  []string{"192.0.2.0/24"},
 				SubnetRoutes:    []string{"192.0.2.0/24"}},
 		},
-		Registrations: []Registration{{AuthID: DemoAuthID, Seen: now.Add(-90 * time.Second)}},
-		Firewall:      DemoFirewall(),
+		Registrations: []Registration{
+			{AuthID: DemoAuthID, Seen: now.Add(-90 * time.Second)},
+			// A browser login from outside example.com, turned away by
+			// allowed_domains: R refuses it (issue #26).
+			{AuthID: DemoRefusedAuthID, Seen: now.Add(-4 * time.Minute), AtIdP: true,
+				Refused: true, RefusedBy: "allowed_domains"},
+		},
+		Firewall: DemoFirewall(),
 		PreAuthKeys: []PreAuthKey{
 			{ID: "1", User: "ops@example.com", KeyPrefix: "0123456789", Reusable: true,
 				Ephemeral: false, Used: true,

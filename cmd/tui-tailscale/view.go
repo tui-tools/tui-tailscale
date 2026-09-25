@@ -587,7 +587,7 @@ func helpKeys() []ui.KeyHint {
 		ui.KeyHint{Key: "f", Desc: "hand the terminal to tui-firewall, to open a port the"},
 		ui.KeyHint{Key: "", Desc: "readiness line reports closed"},
 		ui.KeyHint{Key: "r", Desc: "approve or revoke a node's advertised routes (nodes)"},
-		ui.KeyHint{Key: "R", Desc: "register a node waiting for its login, as a user (nodes)"},
+		ui.KeyHint{Key: "R", Desc: "register a node waiting for its login, as a user; never one the identity provider refused (nodes)"},
 		ui.KeyHint{Key: "e / m / x", Desc: "expire / rename / delete the selected node (nodes)"},
 		ui.KeyHint{Key: "e / n / x", Desc: "edit the selected setting / add a split domain or a"},
 		ui.KeyHint{Key: "", Desc: "record / remove it (dns): a diff of config.yaml, then a restart"},

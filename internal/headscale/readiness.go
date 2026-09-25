@@ -48,6 +48,12 @@ type Readiness struct {
 	// confirmed (read from headscale's journal): the first node usually
 	// shows up here before it shows up in the node list.
 	PendingRegistrations int `json:"pendingRegistrations"`
+	// RefusedRegistrations counts the pending registrations whose browser
+	// login the identity provider's policy refused (allowed_groups,
+	// allowed_domains, allowed_users): headscale keeps them in its cache
+	// like any other, and R will not register them (issue #26). They are
+	// part of PendingRegistrations too.
+	RefusedRegistrations int `json:"refusedRegistrations"`
 	// Ports is the host firewall's answer for the control plane's port and
 	// the node's, present when the firewall could be read. A closed control
 	// port is the step after the unit: headscale runs, and nobody reaches it.
@@ -95,6 +101,21 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	}
 	r.FirstNode = len(h.Nodes) > 0
 	r.PendingRegistrations = len(h.Registrations)
+	registrable, atIdP := 0, 0
+	var refused Registration
+	for _, reg := range h.Registrations {
+		switch ok, _ := reg.Registrable(); {
+		case ok:
+			registrable++
+		case reg.Refused:
+			if r.RefusedRegistrations == 0 {
+				refused = reg
+			}
+			r.RefusedRegistrations++
+		default:
+			atIdP++
+		}
+	}
 	for _, n := range h.Nodes {
 		r.RoutesPending += pendingRoutes(n)
 	}
@@ -132,10 +153,24 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		r.Next = NextIdentity
 		r.NextStep = "no way to log in yet · O sets up an identity provider, or n on " +
 			"the keys screen creates a pre-auth key"
-	case !r.FirstNode && r.PendingRegistrations > 0:
+	case !r.FirstNode && registrable > 0 && r.OIDCConfigured:
+		r.Next = NextFirstNode
+		r.NextStep = "a node is waiting to register · open its /register URL in a browser " +
+			"to log in through the identity provider (R on the nodes screen registers it " +
+			"without the provider's policy)"
+	case !r.FirstNode && registrable > 0:
 		r.Next = NextFirstNode
 		r.NextStep = "a node is waiting to register · R on the nodes screen registers it " +
 			"as a user, or open its /register URL in a browser"
+	case !r.FirstNode && atIdP > 0:
+		r.Next = NextFirstNode
+		r.NextStep = "a node is logging in at the identity provider · its browser " +
+			"finishes the registration"
+	case !r.FirstNode && r.RefusedRegistrations > 0:
+		r.Next = NextFirstNode
+		r.NextStep = "the last browser login was refused by the identity provider's policy (" +
+			refused.RefusedReason() + ") · O edits the allow lists, or j on the node screen " +
+			"joins this host"
 	case !r.FirstNode:
 		r.Next = NextFirstNode
 		r.NextStep = "no node yet · j on the node screen joins this host (or " +

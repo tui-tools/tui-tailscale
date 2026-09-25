@@ -549,8 +549,10 @@ func (a *app) nextKey() string {
 		switch {
 		case a.screen == screenNode && r.PendingRegistrations == 0:
 			return "j"
-		case a.screen == screenNodes && len(a.pendingRegistrations()) > 0:
-			return "R"
+		case a.screen == screenNodes:
+			if regs, _ := a.registrables(); len(regs) > 0 {
+				return "R"
+			}
 		}
 	case headscale.NextRoutes:
 		if a.screen == screenNodes {

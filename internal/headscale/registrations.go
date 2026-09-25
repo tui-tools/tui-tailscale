@@ -21,6 +21,20 @@ import (
 // and not confirmed is a node waiting: its /register/<id> URL finishes it in
 // a browser, and `headscale auth register` (0.29+) or `headscale nodes
 // register` finishes it from here, as a user the operator picks.
+//
+// With OIDC configured, the browser half matters too (issue #26): the
+// /register/<id> URL answers with a redirect to the identity provider, and
+// the provider's answer comes back on /oidc/callback, where headscale applies
+// allowed_groups, allowed_domains and allowed_users. A login they turn away
+// is logged as "user msg: unauthorised group" (or domain, or user) and a 401
+// on the callback, and the registration stays in the cache, looking like any
+// other waiting node. Registering it from the CLI would admit the machine the
+// policy just refused, so each registration also carries whether its browser
+// login went to the identity provider, and whether that login was refused.
+// The callback does not name the registration (its state parameter maps to a
+// cookie), so a refusal is attributed to the newest registration whose
+// browser login is still open; the tool refuses R for every registration that
+// went to the provider anyway, so the attribution only chooses the words.
 
 // RegistrationWindow is how far back the journal is read: headscale keeps a
 // pending registration for 15 minutes (tuning.register_cache_expiration).
@@ -32,6 +46,39 @@ type Registration struct {
 	AuthID string `json:"-"`
 	// Seen is when headscale logged it, zero when the log line had no time.
 	Seen time.Time `json:"-"`
+	// AtIdP reports that its /register URL was opened and redirected to the
+	// identity provider: the login is the provider's to finish, and the CLI
+	// must not finish it around the provider's policy.
+	AtIdP bool `json:"-"`
+	// Refused reports that the identity provider's policy turned the login
+	// away, and RefusedBy names the list that did it (allowed_groups,
+	// allowed_domains or allowed_users), empty when the log only had the 401.
+	Refused   bool   `json:"-"`
+	RefusedBy string `json:"-"`
+}
+
+// RefusedReason says why the identity provider refused a registration.
+func (r Registration) RefusedReason() string {
+	if r.RefusedBy == "" {
+		return "the login callback answered 401"
+	}
+	return "not in " + r.RefusedBy
+}
+
+// Registrable reports whether R may finish a registration from the CLI, and
+// says why not when it may not: a login the identity provider refused, or
+// one that is at the provider now, is the provider's to decide.
+func (r Registration) Registrable() (bool, string) {
+	switch {
+	case r.Refused:
+		return false, r.AuthID + " was refused by the identity provider's policy (" +
+			r.RefusedReason() + "): registering it with R would admit the machine the " +
+			"policy turned away"
+	case r.AtIdP:
+		return false, r.AuthID + " is logging in at the identity provider: its browser " +
+			"finishes it, and R would register it without the provider's policy"
+	}
+	return true, ""
 }
 
 // authIDPattern is a registration id as headscale prints it.
@@ -41,7 +88,22 @@ var (
 	startedPattern   = regexp.MustCompile(`registration using auth id: (` + authIDPattern + `)`)
 	confirmedPattern = regexp.MustCompile(`/register/confirm/(` + authIDPattern + `)`)
 	validAuthID      = regexp.MustCompile(`^` + authIDPattern + `$`)
+	// browserPattern is the GET of a /register/<id> page; with OIDC it
+	// answers with a redirect (3xx) to the identity provider.
+	browserPattern = regexp.MustCompile(`method=GET\b.*path=/register/(` + authIDPattern +
+		`)\b.*status=(3\d\d)\b`)
+	// callbackPattern is the identity provider's answer coming back, and the
+	// status headscale gave it.
+	callbackPattern = regexp.MustCompile(`path=/oidc/callback\b.*status=(\d{3})\b`)
+	// unauthorisedPattern is the policy refusal headscale logs for the
+	// callback: which allow list turned the login away.
+	unauthorisedPattern = regexp.MustCompile(`user msg: unauthori[sz]ed (group|domain|user)\b`)
 )
+
+// allowList names the config key an "unauthorised …" refusal comes from.
+var allowList = map[string]string{
+	"group": "allowed_groups", "domain": "allowed_domains", "user": "allowed_users",
+}
 
 // ValidAuthID reports whether s is a registration id.
 func ValidAuthID(s string) bool { return validAuthID.MatchString(s) }
@@ -55,13 +117,66 @@ func JournalArgv() []string {
 // ParseRegistrations reads the journal (short-unix: an epoch timestamp first)
 // into the registrations still pending, newest first. A registration seen
 // more than RegistrationWindow before now has expired from headscale's cache.
+// Each one also says whether its browser login went to the identity provider,
+// and whether the provider's policy refused it (see the top of this file).
 func ParseRegistrations(out string, now time.Time) []Registration {
 	started := map[string]time.Time{}
 	var order []string
 	confirmed := map[string]bool{}
+	atIdP := map[string]bool{}
+	refusedBy := map[string]string{}
+	refused := map[string]bool{}
+	// browsers are the registrations whose login went to the provider and
+	// has no outcome yet, oldest first; a refusal belongs to the newest.
+	var browsers []string
+	// A refusal is logged twice, the "unauthorised" line and the 401 of the
+	// callback, in either order: the first one marks the registration and
+	// leaves it here for the second to complete.
+	awaitingCallback, awaitingReason := "", ""
+	newestOpen := func() string {
+		for i := len(browsers) - 1; i >= 0; i-- {
+			if id := browsers[i]; !refused[id] && !confirmed[id] {
+				return id
+			}
+		}
+		return ""
+	}
 	for _, line := range strings.Split(out, "\n") {
 		if m := confirmedPattern.FindStringSubmatch(line); m != nil {
 			confirmed[m[1]] = true
+			continue
+		}
+		if m := browserPattern.FindStringSubmatch(line); m != nil {
+			if !atIdP[m[1]] {
+				browsers = append(browsers, m[1])
+			}
+			atIdP[m[1]] = true
+			continue
+		}
+		if m := unauthorisedPattern.FindStringSubmatch(line); m != nil {
+			if awaitingReason != "" {
+				refusedBy[awaitingReason] = allowList[m[1]]
+				awaitingReason = ""
+				continue
+			}
+			if id := newestOpen(); id != "" {
+				refused[id], refusedBy[id] = true, allowList[m[1]]
+				awaitingCallback = id
+			}
+			continue
+		}
+		if m := callbackPattern.FindStringSubmatch(line); m != nil {
+			if m[1] != "401" {
+				continue
+			}
+			if awaitingCallback != "" {
+				awaitingCallback = ""
+				continue
+			}
+			if id := newestOpen(); id != "" {
+				refused[id] = true
+				awaitingReason = id
+			}
 			continue
 		}
 		m := startedPattern.FindStringSubmatch(line)
@@ -80,7 +195,8 @@ func ParseRegistrations(out string, now time.Time) []Registration {
 		if confirmed[id] || (!seen.IsZero() && now.Sub(seen) > RegistrationWindow) {
 			continue
 		}
-		pending = append(pending, Registration{AuthID: id, Seen: seen})
+		pending = append(pending, Registration{AuthID: id, Seen: seen, AtIdP: atIdP[id],
+			Refused: refused[id], RefusedBy: refusedBy[id]})
 	}
 	return pending
 }
