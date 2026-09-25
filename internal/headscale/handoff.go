@@ -73,6 +73,7 @@ func ClosedPorts(r Readiness) FirewallHandoff {
 	}
 	add(p.ControlPort, "tcp", p.Control, RoleControl)
 	add(p.NodePort, "udp", p.Node, RoleNode)
+	add(p.STUNPort, "udp", p.STUN, RoleSTUN)
 	if len(h.Open) == 0 {
 		return FirewallHandoff{}
 	}

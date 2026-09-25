@@ -34,6 +34,8 @@ type controlPlaneDraft struct {
 	challenge, acmeEmail  string
 	certPath, keyPath     string
 	baseDomain            string
+	// derp is the relay question S ends with (issue #28).
+	derp headscale.DERPSettings
 
 	// provider is the identity-provider preset O started from.
 	provider                      headscale.OIDCProvider
@@ -658,6 +660,8 @@ func (a *app) handleControlPlaneInput(purpose inputPurpose, value string) tea.Cm
 		return a.tookKeyPath(value)
 	case inputBaseDomain:
 		return a.tookBaseDomain(value)
+	case inputDERPSTUN:
+		return a.tookSTUNListen(value)
 	case inputOIDCIssuer:
 		return a.tookOIDCIssuer(value)
 	case inputOIDCClientID:

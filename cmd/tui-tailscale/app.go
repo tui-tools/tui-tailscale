@@ -65,6 +65,8 @@ const (
 	inputTLSCertPath
 	inputTLSKeyPath
 	inputBaseDomain
+	// The embedded DERP relay's STUN address, when S's relay step enables it.
+	inputDERPSTUN
 	// The OIDC form, in the order the fields are asked for.
 	inputOIDCIssuer
 	inputOIDCClientID
@@ -99,9 +101,11 @@ const (
 	// than typed words so there is nothing to spell wrong.
 	pickerOIDCOnlyStart
 	pickerOIDCPKCE
-	// The server-settings form's two choices.
+	// The server-settings form's choices: the transport, the ACME
+	// challenge, and where the relays come from.
 	pickerTransport
 	pickerACMEChallenge
+	pickerRelays
 	// The OIDC form's first step: which identity provider.
 	pickerOIDCProvider
 	// The dns screen's switches, and what n adds there.
@@ -987,6 +991,8 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.tookTransport(choice)
 	case pickerACMEChallenge:
 		return a, a.tookChallenge(choice)
+	case pickerRelays:
+		return a, a.tookRelays(choice)
 	case pickerOIDCProvider:
 		return a, a.tookOIDCProvider(choice)
 	case pickerDNSMagic:

@@ -80,6 +80,10 @@ func TestServerSettingsFlow(t *testing.T) {
 			a.input.Model.Value())
 	}
 	a = enter(t, a)
+	if a.mode != modePicker || a.pickerPurpose != pickerRelays || a.picker.Selected() != relayKeep {
+		t.Fatalf("no relay step after base_domain (mode %d)", a.mode)
+	}
+	a = enter(t, a)
 
 	if a.mode != modeConfirm {
 		t.Fatalf("the form did not reach a confirm (mode %d, status %q)", a.mode, a.status)
@@ -140,7 +144,17 @@ func walkServerSettings(t *testing.T, a *app, serverURL string) *app {
 	a = enter(t, a)                   // the current transport
 	a = clearAndType(t, a, serverURL) // server_url
 	a = enter(t, a)                   // listen_addr
-	return enter(t, a)                // base_domain
+	a = enter(t, a)                   // base_domain
+	return keepRelays(t, a)
+}
+
+// keepRelays answers S's relay step with "keep the relays as they are".
+func keepRelays(t *testing.T, a *app) *app {
+	t.Helper()
+	if a.mode != modePicker || a.pickerPurpose != pickerRelays {
+		t.Fatalf("no relay step (mode %d, status %q)", a.mode, a.status)
+	}
+	return enter(t, a)
 }
 
 // TestOIDCFlowNeverShowsTheSecret is the test the whole feature is written
@@ -627,7 +641,7 @@ func TestListScreensWithTheUnitStopped(t *testing.T) {
 	a = startS(t, a, headscale.TransportPlainHTTP)
 	a = clearAndType(t, a, "http://203.0.113.10:443")
 	a = enter(t, a)
-	a = clearAndType(t, a, "tailnet.internal")
+	a = keepRelays(t, clearAndType(t, a, "tailnet.internal"))
 	if !strings.Contains(a.confirm.Body, "Step 1 of 2") {
 		t.Errorf("the count is not 1 of 2 for write + enable --now:\n%s", a.confirm.Body)
 	}
@@ -643,7 +657,7 @@ func TestStepCountWithEnableAndRestart(t *testing.T) {
 	a = enter(t, a)
 	a = clearAndType(t, a, "https://vpn.example.org")
 	a = enter(t, a)
-	a = enter(t, a)
+	a = keepRelays(t, enter(t, a))
 	if !strings.Contains(a.confirm.Body, "Step 1 of 3") {
 		t.Errorf("the count is not 1 of 3 for write + enable + restart:\n%s", a.confirm.Body)
 	}

@@ -364,12 +364,145 @@ func (a *app) tookBaseDomain(value string) tea.Cmd {
 		a.askBaseDomain(value, err)
 		return nil
 	}
+	a.askRelays()
+	return nil
+}
+
+// The relay picker's options (issue #28): the embedded DERP relay on this
+// host, with or without Tailscale's public map next to it, or as it is.
+const (
+	relayKeep           = "keep the relays as they are"
+	relayEmbeddedPublic = "embedded DERP on this host, Tailscale's public relays next to it"
+	relayEmbeddedOnly   = "embedded DERP on this host only: no public relay"
+	relayPublicOnly     = "Tailscale's public relays only: embedded DERP off"
+)
+
+// relayModes maps the picker's options to the settings' modes.
+var relayModes = map[string]string{
+	relayKeep:           headscale.DERPKeep,
+	relayEmbeddedPublic: headscale.DERPEmbeddedPublic,
+	relayEmbeddedOnly:   headscale.DERPEmbeddedOnly,
+	relayPublicOnly:     headscale.DERPPublicOnly,
+}
+
+// askRelays opens the last question of S: where the relays come from. The
+// embedded relay is offered, and turning it off only when it is on.
+func (a *app) askRelays() {
+	cp := a.hsState.ControlPlane
+	options := []string{relayKeep, relayEmbeddedPublic, relayEmbeddedOnly}
+	if cp.DERPEmbedded {
+		options = append(options, relayPublicOnly)
+	}
+	a.picker = ui.NewPicker("Server settings — relays (now: "+headscale.RelaysNote(cp)+")",
+		options, relayKeep)
+	a.pickerPurpose = pickerRelays
+	a.mode = modePicker
+}
+
+// tookRelays records the relay choice: the embedded relay asks where its
+// STUN listener binds, anything else goes to the confirm.
+func (a *app) tookRelays(choice string) tea.Cmd {
+	mode, ok := relayModes[choice]
+	if !ok {
+		a.setStatus(ui.StatusError, "not a relay choice: "+choice)
+		return nil
+	}
+	a.cpDraft.derp = headscale.DERPSettings{Mode: mode}
+	if a.cpDraft.derp.Embedded() {
+		value := a.hsState.ControlPlane.DERPSTUNListenAddr
+		if value == "" {
+			value = headscale.DefaultDERPSTUNListenAddr
+		}
+		a.askSTUNListen(value, nil)
+		return nil
+	}
+	return a.finishServerSettings()
+}
+
+// askSTUNListen opens the embedded relay's STUN address step.
+func (a *app) askSTUNListen(value string, problem error) {
+	a.openRetry(inputDERPSTUN, "Server settings — derp.server.stun_listen_addr",
+		headscale.DefaultDERPSTUNListenAddr, value,
+		"Where the embedded relay's STUN listener binds, over UDP: nodes ask it for their "+
+			"public address to connect directly. Its port has to be open in the host "+
+			"firewall (3478/udp by default); once the restart is done the readiness line "+
+			"reads it, and f hands it to tui-firewall.", problem)
+}
+
+// tookSTUNListen checks the STUN address and opens the confirm.
+func (a *app) tookSTUNListen(value string) tea.Cmd {
+	a.cpDraft.derp.STUNListenAddr = strings.TrimSpace(value)
+	if err := a.cpDraft.derp.Validate(); err != nil {
+		a.askSTUNListen(value, err)
+		return nil
+	}
+	return a.finishServerSettings()
+}
+
+// finishServerSettings turns every answer of S into the one diff of
+// config.yaml the confirm shows.
+func (a *app) finishServerSettings() tea.Cmd {
+	settings := a.settings()
 	edits, err := settings.Edits()
 	if err != nil {
 		a.setStatus(ui.StatusError, err.Error())
 		return nil
 	}
-	return a.confirmConfigWrite(a.transportIntro(settings), edits)
+	derp, err := a.cpDraft.derp.Edits(a.hsState.ControlPlane, settings.ServerURL)
+	if err != nil {
+		a.setStatus(ui.StatusError, err.Error())
+		return nil
+	}
+	return a.confirmConfigWrite(a.transportIntro(settings), append(edits, derp...))
+}
+
+// relayIntro is what the confirm says about the relay choice.
+func (a *app) relayIntro(serverURL string) []string {
+	d := a.cpDraft.derp
+	cp := a.hsState.ControlPlane
+	switch d.Mode {
+	case headscale.DERPPublicOnly:
+		return []string{"Relays: the embedded DERP relay is turned off; nodes that cannot " +
+			"connect directly relay through Tailscale's public DERP servers."}
+	case headscale.DERPEmbeddedPublic, headscale.DERPEmbeddedOnly:
+	default:
+		return nil
+	}
+	lines := []string{fmt.Sprintf("Relays: headscale's embedded DERP relay on this host, "+
+		"reached on server_url (%s); its STUN listener binds %s. It needs %d/udp open in "+
+		"the host firewall: once the restart is done the readiness line reads it, and f "+
+		"hands it to tui-firewall.", headscale.URLHost(serverURL), d.STUNListenAddr,
+		headscale.ListenPort(d.STUNListenAddr))}
+	if d.Mode == headscale.DERPEmbeddedOnly {
+		lines = append(lines, "Tailscale's public map is left out of derp.urls: every "+
+			"relayed connection goes through this host, and there is no fallback relay "+
+			"when it cannot be reached.")
+	} else {
+		lines = append(lines, "Tailscale's public map stays in derp.urls, next to it.")
+	}
+	ipv4, ipv6 := headscale.DERPAddresses(serverURL, cp.DERP.IPv4, cp.DERP.IPv6)
+	switch {
+	case ipv4 != "" || ipv6 != "":
+		lines = append(lines, "derp.server.ipv4/ipv6 follow server_url: "+
+			strings.TrimSpace(orNone(ipv4)+" / "+orNone(ipv6))+".")
+	case cp.DERP.IPv4 != "" || cp.DERP.IPv6 != "":
+		lines = append(lines, "derp.server.ipv4/ipv6 held example addresses, not this "+
+			"host's: they are emptied, so nodes resolve the server_url name.")
+	}
+	if !headscale.ServerURLIsHTTPS(serverURL) {
+		lines = append(lines, "WARNING: server_url is not https. Nodes reach the relay "+
+			"over TLS only, so they cannot use it until server_url is https (Let's Encrypt "+
+			"or own certificate); STUN answers either way.")
+	}
+	return lines
+}
+
+// orNone is a value, or "none" when it is empty.
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 // transportIntro is the confirm dialog's explanation above the diff: what the
@@ -412,6 +545,7 @@ func (a *app) transportIntro(s headscale.TransportSettings) string {
 		a.hsState.ControlPlane.OIDC.Configured()); warning != "" {
 		lines = append(lines, "WARNING: "+warning)
 	}
+	lines = append(lines, a.relayIntro(s.ServerURL)...)
 	lines = append(lines, "", fmt.Sprintf("Step 1 of %d — rewrite ",
 		1+headscale.TailSteps(a.hsState.ControlPlane))+headscale.HeadscaleConfigPath+
 		". Only the lines below change; everything else in the file, comments included, "+

@@ -695,6 +695,13 @@ type PortsReadiness struct {
 	// it. A closed node port is not fatal: peers relay through DERP.
 	NodePort int       `json:"nodePort"`
 	Node     PortState `json:"node"`
+	// STUNPort is the embedded DERP relay's STUN port (stun_listen_addr's,
+	// 3478 by default) and STUN what the firewall does to it over UDP;
+	// both absent when the embedded relay is off (issue #28). A closed STUN
+	// port is not fatal either: nodes find their public address through
+	// the other STUN servers of the DERP map, when it has any.
+	STUNPort int       `json:"stunPort,omitempty"`
+	STUN     PortState `json:"stun,omitempty"`
 }
 
 // PortsFor judges the two ports against a read firewall.
