@@ -27,6 +27,11 @@ var searchPaths = map[string][]string{
 	"dnf":       {"/usr/bin/dnf", "/bin/dnf"},
 	"pacman":    {"/usr/bin/pacman", "/bin/pacman"},
 	"systemctl": {"/usr/bin/systemctl", "/bin/systemctl"},
+	// The private-CA step of the join: each family's way of adding an anchor
+	// to the system trust store.
+	"update-ca-certificates": {"/usr/sbin/update-ca-certificates", "/usr/bin/update-ca-certificates"},
+	"update-ca-trust":        {"/usr/bin/update-ca-trust", "/bin/update-ca-trust"},
+	"trust":                  {"/usr/bin/trust", "/bin/trust"},
 }
 
 // timeouts bounds each binary's runs. A package manager downloads, so it gets

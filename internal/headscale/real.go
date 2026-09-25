@@ -39,6 +39,13 @@ var searchPaths = map[string][]string{
 	// journalctl reads headscale's recent log for the registrations it keeps
 	// nowhere else (see registrations.go).
 	"journalctl": {"/usr/bin/journalctl", "/bin/journalctl"},
+	// The readiness ports step reads the host firewall, never changes it:
+	// tui-firewall's --check when the family's firewall tool is here, the
+	// nftables rule set or the iptables INPUT chain otherwise. tui-firewall is
+	// also what f hands the terminal to.
+	"tui-firewall": {"/usr/bin/tui-firewall", "/usr/local/bin/tui-firewall"},
+	"nft":          {"/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft"},
+	"iptables":     {"/usr/sbin/iptables", "/usr/bin/iptables", "/sbin/iptables"},
 	// The companion install: the package manager, and the kit's steps that
 	// add the tui-tools repository — gpg reads the downloaded key back and
 	// dearmours it, chmod and tee write the keyring and the repository file,
@@ -68,6 +75,10 @@ var privilegedRead = map[string]bool{
 	"stat": true,
 	// A system unit's journal is readable by root and the adm group only.
 	"journalctl": true,
+	// Rule sets are root's to read.
+	"tui-firewall": true,
+	"nft":          true,
+	"iptables":     true,
 }
 
 // escalates reports whether a command runs through the escalation prefix.
@@ -247,6 +258,7 @@ func (r *Real) Load(ctx context.Context) (State, error) {
 	// The configuration is read first: it is the one part of the control plane
 	// that still has an answer when headscale's own socket does not.
 	state.ControlPlane = r.loadControlPlane(ctx)
+	state.Firewall = r.readFirewall(ctx)
 
 	// With the unit known to be stopped, every CLI read would fail on the
 	// socket; the screens say so instead of showing that failure.

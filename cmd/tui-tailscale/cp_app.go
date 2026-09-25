@@ -61,8 +61,11 @@ func (s screen) controlPlane() bool { return s >= screenUsers }
 // handleControlPlaneKey dispatches the action keys of the control-plane
 // screens.
 func (a *app) handleControlPlaneKey(key string) tea.Cmd {
-	if key == "i" {
+	switch key {
+	case "i":
 		return a.startInstallHeadscale()
+	case "f":
+		return a.launchFirewall()
 	}
 	switch a.screen {
 	case screenUsers:
@@ -311,4 +314,29 @@ func (a *app) selectedNode() (headscale.Node, bool) {
 		return headscale.Node{}, false
 	}
 	return a.hsState.Nodes[i], true
+}
+
+// firewallDoneMsg is tui-firewall handing the terminal back.
+type firewallDoneMsg struct{ err error }
+
+// launchFirewall hands the terminal to tui-firewall, the family's tool for
+// opening the ports the readiness line reports closed. Bubble Tea suspends
+// this program, tui-firewall draws on the real terminal, and this screen is
+// restored when it exits, then the ports are read again. It is not previewed
+// as a change because it is not one: tui-firewall previews and confirms
+// whatever it changes (issue #15).
+func (a *app) launchFirewall() tea.Cmd {
+	if !a.hsState.Firewall.Launchable {
+		a.setStatus(ui.StatusWarn, "tui-firewall is not installed · it comes from pkgs.tui.tools "+
+			"(the same repository as headscale)")
+		return nil
+	}
+	process, err := a.hs.LaunchFirewall()
+	if err != nil {
+		a.setStatus(ui.StatusError, err.Error())
+		return nil
+	}
+	a.busy = true
+	a.setStatusf(ui.StatusInfo, "running %s…", process)
+	return tea.Exec(process, func(err error) tea.Msg { return firewallDoneMsg{err: err} })
 }

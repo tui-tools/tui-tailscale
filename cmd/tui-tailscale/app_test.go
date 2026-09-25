@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tui-tools/tui-kit/compat"
+	"github.com/tui-tools/tui-kit/runner"
 	"github.com/tui-tools/tui-kit/theme"
 	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
@@ -136,7 +137,7 @@ func TestBrowserJoinShowsTheLoginURL(t *testing.T) {
 	if a.state.Node.BackendState != tailscale.StateNeedsLogin {
 		t.Fatalf("state after logout = %q", a.state.Node.BackendState)
 	}
-	ranBefore := len(fake.Commands())
+	ranBefore := len(changes(fake))
 
 	press(t, a, "j")
 	if a.inputPurpose != inputJoinServer {
@@ -160,8 +161,8 @@ func TestBrowserJoinShowsTheLoginURL(t *testing.T) {
 		t.Errorf("preview =\n  %s\nwant\n  %s", a.confirm.Command, want)
 	}
 	press(t, a, "y")
-	if len(fake.Commands()) != ranBefore+1 {
-		t.Errorf("the join ran %d commands, want 1", len(fake.Commands())-ranBefore)
+	if len(changes(fake)) != ranBefore+1 {
+		t.Errorf("the join ran %d commands, want 1", len(changes(fake))-ranBefore)
 	}
 	url := tailscale.DemoLoginServer + tailscale.DemoRegisterPath
 	if a.mode != modeNotice || a.notice.copyable != url {
@@ -214,7 +215,7 @@ func TestKeyJoinKeepsTheKeyOffScreen(t *testing.T) {
 		}
 	}
 	press(t, a, "y")
-	ran := fake.Commands()
+	ran := changes(fake)
 	if len(ran) != 5 || ran[0].Stdin != key || ran[4].Argv[0] != "rm" {
 		t.Errorf("ran %q", ran)
 	}
@@ -234,7 +235,7 @@ func TestCancellingTheJoinForgetsTheKey(t *testing.T) {
 	if a.join.key != "" {
 		t.Error("a cancelled form kept the key")
 	}
-	if len(fake.Commands()) != 0 {
+	if len(changes(fake)) != 0 {
 		t.Error("a cancelled form ran something")
 	}
 }
@@ -438,4 +439,17 @@ func TestPendingLoginURLOnTheStatusLineAndNodeScreen(t *testing.T) {
 	if !found {
 		t.Error("the node screen should show the URL on a line of its own")
 	}
+}
+
+// changes is every command the fake ran except the reads a join makes on its
+// own (the login server's certificate check), which need no confirm.
+func changes(fake *tailscale.Fake) []runner.Command {
+	var out []runner.Command
+	for _, cmd := range fake.Commands() {
+		if cmd.Argv[0] == "curl" && strings.Contains(strings.Join(cmd.Argv, " "), "-o /dev/null") {
+			continue
+		}
+		out = append(out, cmd)
+	}
+	return out
 }

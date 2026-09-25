@@ -452,6 +452,10 @@ func (a *app) nextKey() string {
 		return ""
 	}
 	r := headscale.ReadinessFor(a.hsState, time.Now())
+	if a.screen.controlPlane() && (r.Next == headscale.NextPorts ||
+		(r.Ports != nil && r.Ports.Node == headscale.PortClosed && r.Next == headscale.NextReady)) {
+		return "f"
+	}
 	switch {
 	case r.Next == headscale.NextServer || r.Next == headscale.NextUnit:
 		if a.screen == screenUsers {
@@ -493,6 +497,10 @@ func (a *app) emphasizeNext(hints []ui.KeyHint) []ui.KeyHint {
 		h.Desc += " ◂ next"
 		out := append([]ui.KeyHint{h}, hints[:i]...)
 		return append(out, hints[i+1:]...)
+	}
+	if next == "f" {
+		// f has no place in the bar until a port needs it.
+		return append([]ui.KeyHint{{Key: "f", Desc: "firewall ◂ next"}}, hints...)
 	}
 	return hints
 }

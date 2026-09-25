@@ -36,6 +36,9 @@ type Fake struct {
 	// the demo "logs in" on its own, 0 for never; pendingReads counts them
 	// down for the login pending now.
 	completeAfter, pendingReads int
+	// caTrusted records that the trust-CA step ran: from then on the demo's
+	// private login servers verify.
+	caTrusted bool
 }
 
 // DemoLoginServer is the control plane the demo node is joined to.
@@ -183,7 +186,15 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 			f.absent, f.refuse = false, 1
 		}
 		return "", nil
-	case "install", "rm", "sysctl", "curl", "systemctl":
+	case "curl":
+		if hasPair(cmd.Argv, "-o", "/dev/null") {
+			return f.tlsCheck(cmd.Argv[len(cmd.Argv)-1])
+		}
+		return "", nil
+	case "update-ca-certificates", "update-ca-trust", "trust":
+		f.caTrusted = true
+		return "", nil
+	case "install", "rm", "sysctl", "systemctl":
 		// The helpers change files the demo does not model.
 		return "", nil
 	case "tailscale":
@@ -330,6 +341,37 @@ func (f *Fake) applyJoin(flags map[string]string) (string, error) {
 	f.state.Node = node
 	f.state.Peers = demo.Peers
 	return "", nil
+}
+
+// DemoPrivateServer is a login server the demo serves with a certificate from
+// a private CA: the certificate check fails until the trust step ran.
+const DemoPrivateServer = "https://headscale.lab.internal"
+
+// tlsCheck answers the certificate check the way curl would: the demo's
+// public server verifies, a server under .internal does not until its CA was
+// trusted, and anything else does not answer.
+func (f *Fake) tlsCheck(url string) (string, error) {
+	host := URLHost(url)
+	switch {
+	case host == URLHost(DemoLoginServer) || IsTailscaleControl(url):
+		return "", nil
+	case strings.HasSuffix(host, ".internal") && f.caTrusted:
+		return "", nil
+	case strings.HasSuffix(host, ".internal"):
+		return "curl: (60) SSL certificate problem: unable to get local issuer certificate",
+			fmt.Errorf("exit status 60")
+	}
+	return "curl: (6) Could not resolve host: " + host, fmt.Errorf("exit status 6")
+}
+
+// hasPair reports whether argv carries a flag followed by a value.
+func hasPair(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 // parseFlags reads `--name=value` and `--name` arguments into a map.

@@ -550,6 +550,8 @@ func helpKeys() []ui.KeyHint {
 		ui.KeyHint{Key: "S / O", Desc: "server settings / identity provider (users): a diff of"},
 		ui.KeyHint{Key: "", Desc: "config.yaml, then a restart (or an enable)"},
 		ui.KeyHint{Key: "F", Desc: "fix the ownership of headscale's files (users)"},
+		ui.KeyHint{Key: "f", Desc: "hand the terminal to tui-firewall, to open a port the"},
+		ui.KeyHint{Key: "", Desc: "readiness line reports closed"},
 		ui.KeyHint{Key: "r", Desc: "approve or revoke a node's advertised routes (nodes)"},
 		ui.KeyHint{Key: "R", Desc: "register a node waiting for its login, as a user (nodes)"},
 		ui.KeyHint{Key: "e / m / x", Desc: "expire / rename / delete the selected node (nodes)"},

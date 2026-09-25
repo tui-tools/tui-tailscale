@@ -43,6 +43,8 @@ const (
 	inputJoinRoutes
 	// The name a join's answers are saved under as a join profile.
 	inputSaveProfile
+	// The CA certificate to trust when the login server's does not verify.
+	inputJoinCA
 	// The one-setting edits.
 	inputRoutes
 	inputHostname
@@ -312,6 +314,19 @@ func (a *app) load() tea.Cmd {
 	return func() tea.Msg { return readBoth(backend, hs) }
 }
 
+// loadNode re-reads the node alone, keeping the control plane as it was read
+// last: the pending-login poll only waits for the node to flip, and has no
+// reason to re-read headscale's lists, journal and firewall every few seconds.
+func (a *app) loadNode() tea.Cmd {
+	backend, hsState := a.backend, a.hsState
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		state, err := backend.Load(ctx)
+		return loadedMsg{state: state, hsState: hsState, err: err}
+	}
+}
+
 // readBoth is one read of the node and the control plane.
 func readBoth(backend tailscale.Backend, hs headscale.Backend) loadedMsg {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -503,11 +518,25 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.loginPolls++
+		return a, a.loadNode()
+
+	case firewallDoneMsg:
+		a.busy = false
+		if msg.err != nil {
+			a.setStatus(ui.StatusError, "tui-firewall: "+runner.FirstLine(msg.err.Error()))
+		} else {
+			a.setStatus(ui.StatusInfo, "back from tui-firewall · the ports are read again")
+		}
+		a.loading = true
 		return a, a.load()
 
 	case planRanMsg:
 		a.busy = false
 		a.planResult(msg)
+		if msg.plan.Action == tailscale.ActionTrustCA && msg.err == nil && a.join.server != "" {
+			// The CA is trusted now: check again, and go on with the join.
+			return a, tea.Batch(a.reloadAfterChange(), a.checkJoinTLS(a.join.server))
+		}
 		return a, a.reloadAfterChange()
 
 	case hsPlanRanMsg:
@@ -528,6 +557,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tlsCheckedMsg:
 		return a, a.tookTLSCheck(msg)
+
+	case joinTLSMsg:
+		return a, a.tookJoinTLS(msg)
 
 	case tea.KeyMsg:
 		return a.handleKey(msg)
@@ -705,7 +737,9 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		id, _ := payload.(string)
 		return a, a.confirmApproveRoutes(id, value)
 	case inputJoinServer:
-		a.tookJoinServer(value)
+		return a, a.tookJoinServer(value)
+	case inputJoinCA:
+		return a, a.tookJoinCA(value)
 	case inputJoinKey:
 		a.tookJoinKey(value)
 	case inputJoinHostname:
@@ -1131,14 +1165,24 @@ func (a *app) askJoinServer(value, problem string) {
 	a.openInput(inputJoinServer, "Login server", "https://headscale.example.com", value, help)
 }
 
-// tookJoinServer validates the server and asks for the key.
-func (a *app) tookJoinServer(value string) {
+// tookJoinServer validates the server and, for an https one, checks its
+// certificate from this machine before asking for the key.
+func (a *app) tookJoinServer(value string) tea.Cmd {
 	value = strings.TrimRight(value, "/")
 	if problem := tailscale.ServerURLProblem(value); problem != "" {
 		a.askJoinServer(value, problem)
-		return
+		return nil
 	}
 	a.join.server = value
+	if tailscale.IsHTTPS(value) {
+		return a.checkJoinTLS(value)
+	}
+	a.askJoinKey()
+	return nil
+}
+
+// askJoinKey asks for the pre-auth key, masked.
+func (a *app) askJoinKey() {
 	a.openInput(inputJoinKey, "Pre-auth key (optional)", "empty: log in with a browser", "",
 		"Join step 2 of 6 — a pre-auth key (Headscale: `headscale preauthkeys create`), or "+
 			"empty to log in with a browser instead. The key is not echoed, never shown "+

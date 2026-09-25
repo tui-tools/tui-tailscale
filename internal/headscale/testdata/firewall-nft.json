@@ -1,0 +1,15 @@
+{"nftables": [{"metainfo": {"version": "1.0.9", "release_name": "Old Doc Yak #3", "json_schema_version": 1}},
+{"table": {"family": "ip", "name": "filter", "handle": 1}},
+{"chain": {"family": "ip", "table": "filter", "name": "INPUT", "handle": 1, "type": "filter", "hook": "input", "prio": 0, "policy": "accept"}},
+{"chain": {"family": "ip6", "table": "filter", "name": "INPUT", "handle": 1, "type": "filter", "hook": "input", "prio": 0, "policy": "accept"}},
+{"chain": {"family": "ip", "table": "filter", "name": "ts-input", "handle": 2}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 10, "expr": [{"counter": {"packets": 1, "bytes": 1}}, {"jump": {"target": "ts-input"}}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 11, "expr": [{"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 2222}}, {"counter": {"packets": 1, "bytes": 1}}, {"accept": null}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 12, "expr": [{"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 443}}, {"xt": {"type": "match", "name": "conntrack"}}, {"counter": {"packets": 1, "bytes": 1}}, {"accept": null}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 13, "expr": [{"xt": {"type": "match", "name": "conntrack"}}, {"counter": {"packets": 1, "bytes": 1}}, {"accept": null}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 14, "expr": [{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "protocol"}}, "right": "icmp"}}, {"counter": {"packets": 0, "bytes": 0}}, {"accept": null}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 15, "expr": [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"counter": {"packets": 1, "bytes": 1}}, {"accept": null}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 16, "expr": [{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "protocol"}}, "right": "tcp"}}, {"xt": {"type": "match", "name": "conntrack"}}, {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 22}}, {"counter": {"packets": 0, "bytes": 0}}, {"accept": null}]}},
+{"rule": {"family": "ip", "table": "filter", "chain": "INPUT", "handle": 17, "expr": [{"counter": {"packets": 16, "bytes": 762}}, {"xt": {"type": "target", "name": "REJECT"}}]}},
+{"rule": {"family": "ip6", "table": "filter", "chain": "INPUT", "handle": 18, "expr": [{"counter": {"packets": 0, "bytes": 0}}, {"jump": {"target": "ts-input"}}]}}
+]}

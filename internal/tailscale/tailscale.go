@@ -310,6 +310,10 @@ const (
 	// ActionSaveProfile writes a join profile to the tool's config file. It
 	// has no key of its own: it is offered after a join.
 	ActionSaveProfile Action = "save-profile"
+	// ActionTrustCA adds a certificate authority to the system trust store.
+	// It has no key of its own: j offers it when the login server's
+	// certificate does not verify.
+	ActionTrustCA Action = "trust-ca"
 )
 
 // ActionSpec describes one action for the key map and the help screen, so the
@@ -391,6 +395,11 @@ type Request struct {
 
 	// LoginProfile is the id of the login profile to switch to.
 	LoginProfile string
+
+	// CAPath is the certificate authority file to trust, and CAName the name
+	// it is installed under in the trust store.
+	CAPath string
+	CAName string
 }
 
 // Plan is what one confirm dialog shows and one confirmation runs: a few
@@ -505,6 +514,8 @@ func BuildCommand(req Request) (Plan, error) {
 		return buildInstall(req.Distro)
 	case ActionSwitchProfile:
 		return buildSwitchProfile(req)
+	case ActionTrustCA:
+		return buildTrustCA(req)
 	case "":
 		return Plan{}, fmt.Errorf("no action given")
 	}

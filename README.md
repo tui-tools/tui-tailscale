@@ -59,6 +59,22 @@ The guided path from an empty host to a working tailnet, with this host as both 
 
 This is the path validated end to end on a real Ubuntu 24.04 host, with Google as the identity provider and the host serving a subnet to its clients.
 
+## Private tailnet
+
+A tailnet with no public DNS name and no Let's Encrypt: headscale on https with a certificate from a local certificate authority (tui-cert issues one), clients that trust that CA, and the host's ports opened by tui-firewall (a cloud image's INPUT chain usually ends in REJECT). The names are examples: `headscale.lab.internal` for the control plane, `/etc/tui-cert/ca.crt` for the CA's certificate.
+
+1. **Serve the certificate.** `S` on the users screen, transport *own certificate*, and the paths of the certificate and key tui-cert issued for `headscale.lab.internal` (checked from this machine: the account headscale runs as has to be able to read both).
+2. **Open the ports.** The readiness line reads the host firewall and says when `443/tcp` (the control plane) is closed, and whether `41641/udp` (the node's direct connections) is; `f` hands the terminal to tui-firewall to open them, and they are read again when it exits. See [the ports step](#the-next-step).
+3. **Join, trusting the CA.** `j` checks the login server's certificate against this machine's trust store before it runs `tailscale up`. When it does not verify, the join says so and asks for the CA's certificate: typed as a path, previewed as the distribution's own way of adding a trust anchor, then the join goes on:
+
+   | Distribution | Trust step |
+   | --- | --- |
+   | Debian, Ubuntu | `install -m 644 <ca> /usr/local/share/ca-certificates/tui-tailscale-<host>.crt` and `update-ca-certificates` |
+   | Fedora, RHEL | `install -m 644 <ca> /etc/pki/ca-trust/source/anchors/tui-tailscale-<host>.crt` and `update-ca-trust` |
+   | Arch, Omarchy | `trust anchor --store <ca>` |
+
+   Each ends with `systemctl restart tailscaled`, because a running daemon keeps the roots it loaded at start. The dialog says what trusting a CA means: every program on the machine that uses the system trust store trusts what it signs. A certificate that is trusted but issued for another name is reported as such, since no CA fixes it.
+
 ## Manage, not view
 
 ### Join a tailnet (`j`)
@@ -151,9 +167,12 @@ A control plane comes up in an order, and each step only makes sense once the on
 | install | the `headscale` binary is here | `i` installs it |
 | server | `server_url` is set, valid and not loopback, and `dns.base_domain` is one headscale will start with | `S` sets the transport, `server_url` and `base_domain` |
 | unit | the unit is running, and enabled at boot | how to start it, or that `S` and `O` end with the enable |
+| ports | the host firewall lets new connections reach the `server_url` port (443/tcp for https) | `443/tcp is closed in the host firewall` — `f` opens tui-firewall |
 | identity | OIDC is configured, or a pre-auth key can still register a machine | `O` sets up an identity provider, or `n` on the keys screen creates a key |
 | first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine; when a node is already waiting for its login, `R` on the nodes screen registers it |
 | routes | no advertised route waits for approval | `routes pending approval (N)` — `r` on the nodes screen |
+
+The ports step reads the host firewall, and never changes it: `tui-firewall --check` when the family's firewall tool is installed (it already understands ufw, firewalld and nftables), otherwise `nft -j list ruleset` or `iptables -S INPUT`, all escalated. A rule this reader cannot judge (a jump to another chain, a match on an interface or a source) never decides the answer, and a firewall it cannot read is reported as unknown rather than open or closed. A closed `41641/udp` is not a missing step, since peers then relay through DERP, but the ready line says so. `f`, on any control-plane screen, hands the terminal to tui-firewall the way the tui-tools launcher starts a family tool, with no argument; the screen comes back, and re-reads, when it exits. `--check` reports the answer as `readiness.ports`: the source, the two ports and what the firewall does to each (`open`, `closed` or `unknown`).
 
 The hint bar at the bottom says the same: on the screen where the next step is done, its key comes first, marked `◂ next` (`S` on the users screen while the server is not set up, `j` on the node screen while there is no node, `r` on the nodes screen while routes wait).
 
