@@ -220,6 +220,9 @@ func (a *app) headscaleAnswers() bool {
 // ranResult handles the result of one confirmed control-plane command.
 func (a *app) ranResult(msg ranMsg) tea.Cmd {
 	a.busy = false
+	if a.keyNotice.secret && isShownOnceKeyWrite(msg.cmd) {
+		return a.wroteShownOnceKey(msg)
+	}
 	if msg.err != nil {
 		a.after = nil
 		a.cpDraft.forgetSecret()
@@ -241,8 +244,7 @@ func (a *app) ranResult(msg ranMsg) tea.Cmd {
 	// here exactly once. It is never stored: the list keeps only the prefix,
 	// like headscale's own list does.
 	if isPreAuthCreate(msg.cmd) {
-		a.setStatusf(ui.StatusWarn, "pre-auth key (shown once — copy it now): %s",
-			lastLine(msg.output))
+		a.openShownOnceKey(lastLine(msg.output))
 		return a.reloadAfterChange()
 	}
 

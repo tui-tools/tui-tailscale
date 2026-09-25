@@ -484,7 +484,9 @@ func (a *app) peerStyle(p tailscale.Peer) *lipgloss.Style {
 // to the terminal, to line up with the value, but the value itself is never
 // inside it. When the terminal is narrower than the value, Bubble Tea cuts the
 // line at the edge; the body then says so and points at --check, which prints
-// it whole.
+// it whole. A secret (the shown-once pre-auth key) is the exception: it is
+// never cut and never in --check, so a terminal too narrow for it gets no
+// part of it, only the width it needs and the root-only file w writes.
 func (a *app) noticeView() string {
 	t := a.theme
 	n := a.notice
@@ -499,7 +501,15 @@ func (a *app) noticeView() string {
 	content := max(inner-frame, 20)
 
 	body := n.body
-	if value > 0 && !fits {
+	switch {
+	case value > 0 && !fits && n.secret:
+		// A secret is never cut, and never offered through --check: the
+		// line is left out until the window is wide enough (issue #30).
+		body += fmt.Sprintf("\n\nThis terminal is %d columns wide and the key needs %d, "+
+			"so it is not shown: a cut key is one headscale rejects. Widen the window "+
+			"and it appears here whole, or press w to write it once to a root-only file "+
+			"instead.", a.width, value)
+	case value > 0 && !fits:
 		body += "\n\nThis terminal is narrower than the URL, so the line below is cut: " +
 			"widen the window, or use --check as above."
 	}
@@ -514,12 +524,16 @@ func (a *app) noticeView() string {
 	box := t.Dialog.Width(inner).Render(strings.Join(lines, "\n"))
 
 	block := []string{lipgloss.PlaceHorizontal(a.width, lipgloss.Center, box)}
-	if value > 0 {
+	if value > 0 && (fits || !n.secret) {
 		// Plain text: no style that could pad it, no indent, no frame.
 		block = append(block, "", n.copyable)
 	}
-	block = append(block, "", lipgloss.PlaceHorizontal(a.width, lipgloss.Center,
-		t.Key.Render("any key")+" "+t.KeyDesc.Render("close")))
+	keys := t.Key.Render("any key") + " " + t.KeyDesc.Render("close")
+	if n.secret {
+		keys = t.Key.Render("w") + " " + t.KeyDesc.Render("write it to a root-only file") +
+			"   " + t.Key.Render("any other key") + " " + t.KeyDesc.Render("close and forget it")
+	}
+	block = append(block, "", lipgloss.PlaceHorizontal(a.width, lipgloss.Center, keys))
 	out := strings.Join(block, "\n")
 	top := max((a.height-lipgloss.Height(out))/2, 0)
 	return strings.Repeat("\n", top) + out

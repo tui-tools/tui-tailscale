@@ -567,3 +567,28 @@ func TestConfigMissingAndReinstall(t *testing.T) {
 		t.Errorf("after the reinstall, S is next: %+v", r)
 	}
 }
+
+// TestWriteShownOnceKey: the key goes on stdin, never into the argv or the
+// preview, and the file is root-only under /run (issue #30).
+func TestWriteShownOnceKey(t *testing.T) {
+	const secret = "hskey-auth-abcdefghijkl-0123456789abcdefghijklmnopqrstuvwxyz" //nolint:gosec // a test value, not a credential
+	path := ShownOnceKeyPath(time.Date(2026, 9, 25, 10, 11, 12, 0, time.UTC))
+	if path != "/run/tui-tailscale/preauth-20260925-101112.key" {
+		t.Errorf("path = %q", path)
+	}
+	cmd, err := BuildWriteShownOnceKey(secret, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(cmd.String(), secret) || strings.Contains(cmd.Description, secret) {
+		t.Errorf("the key reached the preview: %q", cmd.String())
+	}
+	if cmd.String() != "install -D -m 600 /dev/stdin "+path || cmd.Stdin != secret+"\n" {
+		t.Errorf("cmd = %q, stdin %q", cmd.String(), cmd.Stdin)
+	}
+	for _, bad := range []string{"", "-rf", "key with space", "a/b/../c"} {
+		if _, err := BuildWriteShownOnceKey(bad, path); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

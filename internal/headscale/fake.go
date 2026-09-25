@@ -60,8 +60,15 @@ type Fake struct {
 	configMissing bool
 }
 
-// demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake.
-const demoNewPreAuthKey = "demodemodemodemodemodemodemodemodemodemo1234"
+// demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake, but
+// shaped like headscale 0.29's: hskey-auth-, a 12-character prefix, a dash and
+// a 64-character secret, 88 characters in all (issue #30 is about exactly
+// that length).
+const demoNewPreAuthKey = "hskey-auth-demodemodemo-" +
+	"demodemodemodemodemodemodemodemodemodemodemodemodemodemodemo0000"
+
+// demoNewPreAuthKeyPrefix is the part of it the list keeps.
+const demoNewPreAuthKeyPrefix = "hskey-auth-demodemodemo"
 
 // DemoServerURL is the demo control plane's server_url: the login server the
 // demo node of internal/tailscale is joined to.
@@ -739,7 +746,7 @@ func (f *Fake) createPreAuthKey(argv []string) (string, error) {
 	}
 	next := fmt.Sprintf("%d", len(f.state.PreAuthKeys)+1)
 	f.state.PreAuthKeys = append(f.state.PreAuthKeys, PreAuthKey{
-		ID: next, User: userName, KeyPrefix: demoNewPreAuthKey[:10],
+		ID: next, User: userName, KeyPrefix: demoNewPreAuthKeyPrefix,
 		Reusable: reusable, Ephemeral: ephemeral,
 		Expiration: time.Now().Add(d), CreatedAt: time.Now(),
 	})
