@@ -126,8 +126,11 @@ if command -v tailscale >/dev/null 2>&1; then
       '"daemonRunning": false'
   fi
 
+  # The install blocks name the package repositories they fetch from (a
+  # headscale install on a host without the tui-tools repository, say): those
+  # are public URLs, not this node's, and are left out.
   check "check carries no URL of this node beyond a pending login's" \
-    "$bin --check | grep -v '\"loginUrl\":' | grep -c '://' || true" \
+    "$bin --check | grep -v '\"loginUrl\":' | grep -vE 'https://pkgs\.(tui\.tools|tailscale\.com)/' | grep -c '://' || true" \
     '^0$'
 else
   # No client: the tool must say so, and give this distribution's commands.

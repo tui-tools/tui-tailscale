@@ -283,8 +283,8 @@ func (a *app) openConfirmPreAuthKey(value string) tea.Cmd {
 	create, err := headscale.BuildCreatePreAuthKey(userID, reusable, ephemeral, expiration)
 	return a.openConfirmWith(
 		"Creates a key that lets a machine register itself as this user, without a browser "+
-			"login. Headscale prints the key once; this tool shows it once in the status "+
-			"line and never stores it.",
+			"login. Headscale prints the key once; this tool shows it once, whole, on a "+
+			"dialog of its own, and never stores it.",
 		create, err)
 }
 
