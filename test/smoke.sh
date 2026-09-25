@@ -244,6 +244,28 @@ check "check --demo names the next missing step" \
   "$bin --demo --check" \
   '"next": "unit"'
 
+# 0.2.0: join profiles by name only, the dns section as counts, the waiting
+# registration counted, and the firewall's ports as open/closed/unknown.
+check "check --demo lists the join profiles by name" \
+  "$bin --demo --check | tr -d ' \n'" \
+  '"joinProfiles":\["laptop","subnet-router"\]'
+
+check "check --demo counts the dns section" \
+  "$bin --demo --check | tr -d ' \n'" \
+  '"splitDomains":1,"searchDomains":1,"extraRecords":1'
+
+check "check --demo counts the node waiting to register" \
+  "$bin --demo --check" \
+  '"pendingRegistrations": 1'
+
+check "check --demo prints no registration id" \
+  "$bin --demo --check | grep -c 'hskey-' || true" \
+  '^0$'
+
+check "check --demo reads the firewall's ports" \
+  "$bin --demo --check | tr -d ' \n'" \
+  '"ports":\{"source":"tui-firewall","controlPort":443,"control":"open","nodePort":41641,"node":"closed"\}'
+
 # --- the control plane, on this machine ---------------------------------------
 if command -v headscale >/dev/null 2>&1; then
   check "check says headscale is present" \
@@ -301,7 +323,7 @@ if command -v headscale >/dev/null 2>&1; then
 
   check "check names the next missing step" \
     "sudo -n $bin --check" \
-    '"next": "(server|unit|identity|first-node|routes|ready)"'
+    '"next": "(server|unit|ports|identity|first-node|routes|ready)"'
 
   check "check carries no URL of this control plane" \
     "sudo -n $bin --check | grep -v '\"loginUrl\":' | grep -c '://' || true" \

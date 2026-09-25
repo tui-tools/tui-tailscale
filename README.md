@@ -24,16 +24,16 @@ It manages as well as reads. Every change is shown as the exact command line fir
 tui-tailscale --demo
 ```
 
-`--demo` runs every screen against one sample tailnet, both ends of it: a fake node joined to `https://headscale.example.com`, with two peers — `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet — and the fake control plane that serves them, where the node is registered under `user@example.com` and `office-router` advertises a second subnet nobody approved yet, so `r` has something to approve. Its unit runs but is disabled, the way a fresh install is usually left, so the readiness line and the end of `S` and `O` show the enable. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
+`--demo` runs every screen against one sample tailnet, both ends of it: a fake node joined to `https://headscale.example.com`, with two peers — `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet — and the fake control plane that serves them, where the node is registered under `user@example.com` and `office-router` advertises a second subnet nobody approved yet, so `r` has something to approve; a laptop waits to register, so `R` has one to register; the DNS section carries a split domain and an extra record; two join profiles pre-fill `j`, and a login server under `.internal` (`https://headscale.lab.internal`) walks the private-CA step. Its unit runs but is disabled, the way a fresh install is usually left, so the readiness line and the end of `S` and `O` show the enable. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
 
 ## Screens
 
-`tab` (or `1` to `5`) switches between them. `j` and `h` are actions here, so the selection moves with the arrow keys. The header names both backends with their versions — `tailscale 1.102.4` and `headscale 0.29.3`, or `headscale: not installed` — and the keys belong to the screen they are pressed on: the node's on the node and peers screens, the control plane's on the other three.
+`tab` (or `1` to `6`) switches between them. `j` and `h` are actions here, so the selection moves with the arrow keys. The header names both backends with their versions — `tailscale 1.102.4` and `headscale 0.29.3`, or `headscale: not installed` — and the keys belong to the screen they are pressed on: the node's on the node and peers screens, the control plane's on the other four.
 
 - **node** — the backend state (running, stopped, logged out, waiting for approval), the login server and whether it is self-hosted, the owner, the hostname and MagicDNS name, the tailnet addresses, and the settings: accept routes, advertised routes, the exit node in use, whether this node offers itself as one, accept DNS, the client version and its health warnings. A login waiting for a browser shows its URL here until it completes. When tailscale is not installed, or tailscaled is not running, or refuses this user, the screen says so and what to do.
 - **peers** — the rest of the tailnet: name, owner, tailnet address, online (or when last seen), OS, whether the peer offers an exit node or is the one in use, and the subnets it serves (its primary routes and any allowed prefix beyond its own addresses).
 
-- **users**, **nodes**, **preauth keys** — the control plane on this host, behind a `headscale:` mark in the tab bar so its nodes cannot be read as this node's peers. See [Control plane (headscale)](#control-plane-headscale).
+- **users**, **nodes**, **preauth keys**, **dns** — the control plane on this host, behind a `headscale:` mark in the tab bar so its nodes cannot be read as this node's peers. See [Control plane (headscale)](#control-plane-headscale).
 
 ![The peers screen](docs/screenshots/tui-tailscale-peers.png)
 
@@ -73,6 +73,8 @@ A tailnet with no public DNS name and no Let's Encrypt: headscale on https with 
    | Fedora, RHEL | `install -m 644 <ca> /etc/pki/ca-trust/source/anchors/tui-tailscale-<host>.crt` and `update-ca-trust` |
    | Arch, Omarchy | `trust anchor --store <ca>` |
 
+   ![The CA step of a join](docs/screenshots/tui-tailscale-trust.png)
+
    Each ends with `systemctl restart tailscaled`, because a running daemon keeps the roots it loaded at start. The dialog says what trusting a CA means: every program on the machine that uses the system trust store trusts what it signs. A certificate that is trusted but issued for another name is reported as such, since no CA fixes it.
 
 ## Manage, not view
@@ -102,6 +104,8 @@ When the join advertises routes or an exit node, the same preview turns IP forwa
 A machine that leaves and re-joins its tailnet while things are being set up (a logout to test a fresh join, a re-key, a move to a new control plane) is asked the same six questions every time. A **join profile** is this tool's preset for `j`: those answers under a name. When there are any, `j` opens with a picker (a saved profile, or new questions); picking one pre-fills every step, still editable and still previewed, so the join is confirm-and-go. The profile that matches the node's current settings is the one offered.
 
 After a join with new answers (right away with a pre-auth key, or once a browser login completes), the tool offers to save them: type a name, or leave it empty to skip. The save is a previewed write of the config file, with the lines that change shown as a diff: `/etc/tui-tailscale/config.toml` for root, `~/.config/tui-tailscale/config.toml` for any other user (written as that user; its profiles override the machine-wide ones of the same name). A profile is a `[[profile]]` table with `name`, `login_server`, `hostname`, `accept_routes`, `advertise_routes` and `advertise_exit_node` (see [`examples/config.toml`](examples/config.toml)). It never holds a secret: the pre-auth key is asked for every time and is not part of a profile.
+
+![j with join profiles](docs/screenshots/tui-tailscale-profiles.png)
 
 The node screen names the join profile that matches its settings, and the logout dialog says which one restores them. `--check` lists the profile names only (`joinProfiles`).
 
@@ -313,6 +317,8 @@ Each change goes through the same splice writer as `S` and `O`: the confirm show
 ```
 
 Every edit is proven before it is shown: the edited file is read back, and what headscale would read has to be exactly what the form asked for; a `dns:` section written in a shape the splice cannot edit safely (in flow style, say) is refused rather than rewritten. The checks are headscale's own: `base_domain` is required while MagicDNS is on and must not contain the `server_url` host, a nameserver is an IP address or an `https://` DNS-over-HTTPS URL, a split domain needs at least one nameserver, and a record is `name type address` with A or AAAA only (headscale's own configuration notes that only those reach a Tailscale client, so a CNAME would be written and never answered). A record outside `base_domain` is allowed, with a note. While `extra_records_path` is set, the records come from that file and are not edited here.
+
+![The dns screen](docs/screenshots/tui-tailscale-dns.png)
 
 `--check` reports the section as `dns` in `controlPlane`: the two switches and how many global nameservers, split domains, search domains and records there are, never the names and addresses themselves.
 
