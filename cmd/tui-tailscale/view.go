@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tui-tools/tui-kit/ui"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
@@ -342,8 +343,39 @@ func (a *app) header() string {
 			Value: strconv.Itoa(online) + "/" + strconv.Itoa(len(s.Peers)) + " online"})
 	}
 	facts = append(facts, a.backendFacts()...)
-	return ui.Header{Title: "tui-tailscale", Subtitle: a.backend.Describe(), Facts: facts}.
-		Render(a.theme, a.width)
+	return a.fitHeader(a.backend.Describe(), facts)
+}
+
+// headerFactSeparator is what the kit's header puts between two facts.
+const headerFactSeparator = "   "
+
+// fitHeader renders the header as exactly headerLines rows at any width
+// (issue #31): the title row, then every fact on one row. The kit's header
+// wraps facts onto as many rows as they need, and one row more than the
+// layout counts pushes the title off the top of the screen, so each row is
+// cut at the width instead, with a trailing ellipsis where it was cut, like
+// the readiness line. The facts come in order of importance, so what a
+// narrow terminal loses is the end of the row.
+func (a *app) fitHeader(subtitle string, facts []ui.Fact) string {
+	t := a.theme
+	title := t.Title.Render("tui-tailscale")
+	if subtitle != "" {
+		title += t.Muted.Render("  " + subtitle)
+	}
+	parts := make([]string, 0, len(facts))
+	for _, f := range facts {
+		style := t.Base
+		if f.Style != nil {
+			style = *f.Style
+		}
+		parts = append(parts, t.Muted.Render(f.Label+": ")+style.Render(f.Value))
+	}
+	inner := max(a.width-t.Header.GetHorizontalFrameSize(), 1)
+	rows := []string{
+		ansi.Truncate(title, inner, ui.Ellipsis),
+		ansi.Truncate(strings.Join(parts, headerFactSeparator), inner, ui.Ellipsis),
+	}
+	return t.Header.Width(a.width).Render(strings.Join(rows, "\n"))
 }
 
 // backendFacts are the header's two backend badges: the tailscale client and
