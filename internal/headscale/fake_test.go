@@ -366,6 +366,25 @@ func TestInstallAddsThePinnedRepositoryFirst(t *testing.T) {
 	}
 }
 
+// TestInstallRefreshesOnce: the kit's companion builder starts the apt install
+// with a refresh, and the repository setup already ends with one; the plan
+// runs it once.
+func TestInstallRefreshesOnce(t *testing.T) {
+	plan, err := BuildInstall(ubuntu(), RepoState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshes := 0
+	for _, s := range plan.Steps {
+		if strings.HasSuffix(s.String(), "apt-get update") {
+			refreshes++
+		}
+	}
+	if refreshes != 1 {
+		t.Errorf("%d refreshes in %q", refreshes, plan.Steps)
+	}
+}
+
 func TestInstallWithTheRepositoryConfigured(t *testing.T) {
 	cases := map[string]struct {
 		distro pkgmgr.Distro
@@ -546,5 +565,71 @@ func TestConfigMissingAndReinstall(t *testing.T) {
 	if r := ReadinessFor(state, now); r.Next != NextServer ||
 		!strings.Contains(r.NextStep, "S sets the transport") {
 		t.Errorf("after the reinstall, S is next: %+v", r)
+	}
+}
+
+// TestWriteShownOnceKey: the key goes on stdin, never into the argv or the
+// preview, and the file is root-only under /run (issue #30).
+func TestWriteShownOnceKey(t *testing.T) {
+	const secret = "hskey-auth-abcdefghijkl-0123456789abcdefghijklmnopqrstuvwxyz" //nolint:gosec // a test value, not a credential
+	path := ShownOnceKeyPath(time.Date(2026, 9, 25, 10, 11, 12, 0, time.UTC))
+	if path != "/run/tui-tailscale/preauth-20260925-101112.key" {
+		t.Errorf("path = %q", path)
+	}
+	cmd, err := BuildWriteShownOnceKey(secret, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(cmd.String(), secret) || strings.Contains(cmd.Description, secret) {
+		t.Errorf("the key reached the preview: %q", cmd.String())
+	}
+	if cmd.String() != "install -D -m 600 /dev/stdin "+path || cmd.Stdin != secret+"\n" {
+		t.Errorf("cmd = %q, stdin %q", cmd.String(), cmd.Stdin)
+	}
+	for _, bad := range []string{"", "-rf", "key with space", "a/b/../c"} {
+		if _, err := BuildWriteShownOnceKey(bad, path); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// TestFirewallHandoffArgs: the hand-off holds its values to tui-firewall
+// 0.6.0's own rules, so it never ends in tui-firewall refusing to start.
+func TestFirewallHandoffArgs(t *testing.T) {
+	ok := FirewallHandoff{Open: []FirewallPort{{Port: 443, Proto: "tcp"}, {Port: 3478, Proto: "udp"}},
+		Comment: "tailnet control plane and DERP STUN"}
+	args, err := ok.Args()
+	if err != nil || strings.Join(args, " ") != "--open 443/tcp,3478/udp --comment tailnet control plane and DERP STUN" {
+		t.Errorf("args = %q, %v", args, err)
+	}
+	if args, err := (FirewallHandoff{}).Args(); err != nil || args != nil {
+		t.Errorf("no port: %q, %v", args, err)
+	}
+	bad := []FirewallHandoff{
+		{Open: []FirewallPort{{Port: 0, Proto: "tcp"}}},
+		{Open: []FirewallPort{{Port: 65536, Proto: "tcp"}}},
+		{Open: []FirewallPort{{Port: 53, Proto: "sctp"}}},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}, {Port: 53, Proto: "udp"}}},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}}, Comment: "two\nlines"},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}}, Comment: strings.Repeat("x", 129)},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}}, Comment: "--check"},
+	}
+	for _, h := range bad {
+		if _, err := h.Args(); err == nil {
+			t.Errorf("%+v accepted", h)
+		}
+	}
+}
+
+func TestFirewallVersion(t *testing.T) {
+	cases := map[string]bool{
+		"tui-firewall 0.6.0\n": true, "tui-firewall v0.7.1": true, "tui-firewall 1.0.0": true,
+		"tui-firewall 0.5.0": false, "tui-firewall 0.5.9": false, "tui-firewall dev": false, "": false,
+		"tui-firewall 0.6.0-rc.1": true,
+	}
+	for out, want := range cases {
+		if got := FirewallTakesOpen(ParseFirewallVersion(out)); got != want {
+			t.Errorf("%q: %v, want %v", out, got, want)
+		}
 	}
 }

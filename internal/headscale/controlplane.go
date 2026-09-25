@@ -124,6 +124,12 @@ type ControlPlane struct {
 	DERPEmbedded  bool `json:"derpEmbedded"`
 	DERPPublicMap bool `json:"derpPublicMap"`
 	DERPCustom    bool `json:"derpCustom"`
+	// DERPSTUNListenAddr is derp.server.stun_listen_addr: where the embedded
+	// relay's STUN listener binds, whose UDP port readiness reads when the
+	// relay is on (issue #28).
+	DERPSTUNListenAddr string `json:"derpStunListenAddr,omitempty"`
+	// DERP is the rest of the derp: section, which S's relay step edits.
+	DERP DERPConfig `json:"-"`
 	// Raw is the file byte for byte, kept so an edit can be a minimal splice
 	// of the original rather than a re-serialisation of it. It is deliberately
 	// not serialised: --check prints facts, not somebody's configuration file.
@@ -189,6 +195,16 @@ type headscaleConfigDoc struct {
 	DERP struct {
 		Server struct {
 			Enabled bool `yaml:"enabled"`
+			// region_id is read as text, so a quoted one does not make the
+			// whole file unreadable.
+			RegionID       string `yaml:"region_id"`
+			RegionCode     string `yaml:"region_code"`
+			RegionName     string `yaml:"region_name"`
+			STUNListenAddr string `yaml:"stun_listen_addr"`
+			PrivateKeyPath string `yaml:"private_key_path"`
+			AutoAddRegion  *bool  `yaml:"automatically_add_embedded_derp_region"`
+			IPv4           string `yaml:"ipv4"`
+			IPv6           string `yaml:"ipv6"`
 		} `yaml:"server"`
 		// URLs is nil when the key is absent, which headscale reads as
 		// Tailscale's public map.
@@ -300,6 +316,21 @@ func ParseHeadscaleConfig(data []byte) (ControlPlane, error) {
 		}
 	}
 	cp.DERPCustom = cp.DERPCustom || len(doc.DERP.Paths) > 0
+	srv := doc.DERP.Server
+	cp.DERPSTUNListenAddr = strings.TrimSpace(srv.STUNListenAddr)
+	cp.DERP = DERPConfig{
+		RegionID:       atoiOrZero(srv.RegionID),
+		RegionCode:     strings.TrimSpace(srv.RegionCode),
+		RegionName:     strings.TrimSpace(srv.RegionName),
+		PrivateKeyPath: strings.TrimSpace(srv.PrivateKeyPath),
+		IPv4:           strings.TrimSpace(srv.IPv4),
+		IPv6:           strings.TrimSpace(srv.IPv6),
+		AutoAddRegion:  srv.AutoAddRegion,
+		Paths:          doc.DERP.Paths,
+	}
+	if doc.DERP.URLs != nil {
+		cp.DERP.URLs = append([]string{}, (*doc.DERP.URLs)...)
+	}
 	o := doc.OIDC
 	cp.OIDC = OIDCConfig{
 		Issuer:             strings.TrimSpace(o.Issuer),
@@ -317,6 +348,15 @@ func ParseHeadscaleConfig(data []byte) (ControlPlane, error) {
 	}
 	cp.OIDC.ClientSecretSet = cp.OIDC.ClientSecretPath != "" || cp.OIDC.ClientSecretInline
 	return cp, nil
+}
+
+// atoiOrZero reads a number, 0 when it is not one.
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // PublicDERPMapHost serves Tailscale Inc.'s DERP map, the default of

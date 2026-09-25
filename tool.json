@@ -3,7 +3,7 @@
   "name": "tui-tailscale",
   "binary": "tui-tailscale",
   "tagline": "Self-hosted Tailscale from the terminal: the control plane and this node",
-  "description": "Self-hosted Tailscale from the terminal, both ends of it: the [Headscale](https://headscale.net) control plane on this host, and this machine as a tailnet node.\n\nThe node screens show the state, login server, addresses and routes, and the peers. `j` joins (this host's control plane offered first, join profiles pre-filling every step), with a pre-auth key that never touches a command line, and trusts a private CA when the server's certificate needs one, offering the CAs tui-cert keeps here.\n\nThe control-plane screens list headscale's users, nodes, nodes waiting to register, pre-auth keys and DNS, with one line naming the next missing step, the host firewall's ports included. `S` sets the transport (an own certificate picked from the pairs tui-cert issued), `O` the identity provider (Google or any OIDC), `r` approves routes, and the dns screen edits MagicDNS, nameservers, split DNS and records. Each change to config.yaml is a minimal diff, confirmed, then a restart.\n\nWhen `tailscale` or `headscale` is absent, `i` installs it. `--demo` shows every screen with nothing installed.",
+  "description": "Self-hosted Tailscale from the terminal, both ends of it: the [Headscale](https://headscale.net) control plane on this host, and this machine as a tailnet node.\n\nThe node screens show the state, login server, addresses and routes, and the peers. `j` joins (this host's control plane offered first, join profiles pre-filling every step), with a pre-auth key that never touches a command line, and trusts a private CA when the server's certificate needs one, offering the CAs tui-cert keeps here.\n\nThe control-plane screens list headscale's users, nodes, nodes waiting to register, pre-auth keys and DNS, with one line naming the next missing step, the host firewall's ports included, which `f` hands to tui-firewall prefilled. `S` sets the transport (an own certificate picked from the pairs tui-cert issued) and can enable headscale's embedded DERP relay, `O` the identity provider (Google or any OIDC), `r` approves routes, and the dns screen edits MagicDNS, nameservers, split DNS and records. Each change to config.yaml is a minimal diff, confirmed, then a restart.\n\nWhen `tailscale` or `headscale` is absent, `i` installs it. `--demo` shows every screen with nothing installed.",
   "category": "vpn",
   "homepage": "https://github.com/tui-tools/tui-tailscale",
   "repo": "https://github.com/tui-tools/tui-tailscale",
@@ -42,6 +42,14 @@
     {
       "path": "docs/screenshots/tui-tailscale-certfile.png",
       "caption": "The file picker, for a certificate from anywhere else: a listing filtered to .pem and .crt, or a typed path"
+    },
+    {
+      "path": "docs/screenshots/tui-tailscale-relays.png",
+      "caption": "The last question of S: headscale's embedded DERP relay, with or without Tailscale's public relays next to it"
+    },
+    {
+      "path": "docs/screenshots/tui-tailscale-preauth.png",
+      "caption": "A pre-auth key, shown once: on a line of its own below the frame, whole, never cut"
     },
     {
       "path": "docs/screenshots/tui-tailscale-routes.png",
@@ -111,11 +119,11 @@
     },
     {
       "key": "n",
-      "action": "Create a headscale user (users screen) or pre-auth key (keys screen)"
+      "action": "Create a headscale user (users) or pre-auth key (keys: shown once, whole; w saves it)"
     },
     {
       "key": "S / O",
-      "action": "Control plane: server and transport (tui-cert's pairs) / OIDC provider"
+      "action": "Control plane: server, transport (tui-cert's pairs), embedded DERP relay / OIDC provider"
     },
     {
       "key": "F",
@@ -123,7 +131,7 @@
     },
     {
       "key": "f",
-      "action": "Hand the terminal to tui-firewall to open a port readiness reports closed"
+      "action": "Hand the terminal to tui-firewall with the ports readiness reports closed, prefilled"
     },
     {
       "key": "r (nodes)",

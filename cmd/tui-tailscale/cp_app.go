@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tui-tools/tui-kit/runner"
@@ -220,6 +222,9 @@ func (a *app) headscaleAnswers() bool {
 // ranResult handles the result of one confirmed control-plane command.
 func (a *app) ranResult(msg ranMsg) tea.Cmd {
 	a.busy = false
+	if a.keyNotice.secret && isShownOnceKeyWrite(msg.cmd) {
+		return a.wroteShownOnceKey(msg)
+	}
 	if msg.err != nil {
 		a.after = nil
 		a.cpDraft.forgetSecret()
@@ -241,8 +246,7 @@ func (a *app) ranResult(msg ranMsg) tea.Cmd {
 	// here exactly once. It is never stored: the list keeps only the prefix,
 	// like headscale's own list does.
 	if isPreAuthCreate(msg.cmd) {
-		a.setStatusf(ui.StatusWarn, "pre-auth key (shown once — copy it now): %s",
-			lastLine(msg.output))
+		a.openShownOnceKey(lastLine(msg.output))
 		return a.reloadAfterChange()
 	}
 
@@ -279,8 +283,8 @@ func (a *app) openConfirmPreAuthKey(value string) tea.Cmd {
 	create, err := headscale.BuildCreatePreAuthKey(userID, reusable, ephemeral, expiration)
 	return a.openConfirmWith(
 		"Creates a key that lets a machine register itself as this user, without a browser "+
-			"login. Headscale prints the key once; this tool shows it once in the status "+
-			"line and never stores it.",
+			"login. Headscale prints the key once; this tool shows it once, whole, on a "+
+			"dialog of its own, and never stores it.",
 		create, err)
 }
 
@@ -358,16 +362,24 @@ type firewallDoneMsg struct{ err error }
 // this program, tui-firewall draws on the real terminal, and this screen is
 // restored when it exits, then the ports are read again. It is not previewed
 // as a change because it is not one: tui-firewall previews and confirms
-// whatever it changes (issue #15). The binary is looked for at the moment f
+// whatever it changes (issue #15). The ports readiness found closed are
+// handed over, so tui-firewall opens its add form prefilled with each one
+// (issue #32); nothing closed is a plain launch. The binary is looked for at the moment f
 // is pressed, not taken from the last read, so one installed in another
 // terminal is found; when it is not there, f offers its install, previewed
 // like i's (issue #25).
 func (a *app) launchFirewall() tea.Cmd {
-	process, err := a.hs.LaunchFirewall()
-	if err != nil {
+	handoff := headscale.ClosedPorts(headscale.ReadinessFor(a.hsState, time.Now()))
+	launch, err := a.hs.LaunchFirewall(handoff)
+	if errors.Is(err, headscale.ErrFirewallMissing) {
 		return a.startInstallFirewall()
 	}
+	if err != nil {
+		a.setStatus(ui.StatusError, "tui-firewall: "+err.Error())
+		return nil
+	}
 	a.busy = true
-	a.setStatusf(ui.StatusInfo, "running %s…", process)
-	return tea.Exec(process, func(err error) tea.Msg { return firewallDoneMsg{err: err} })
+	a.firewallHint = launch.Hint
+	a.setStatusf(ui.StatusInfo, "running %s…", launch.Process)
+	return tea.Exec(launch.Process, func(err error) tea.Msg { return firewallDoneMsg{err: err} })
 }

@@ -89,7 +89,7 @@ func TestPlainHTTPOnAnIP(t *testing.T) {
 		t.Errorf("listen_addr prefill = %q, want the wildcard on the URL's port", got)
 	}
 	a = enter(t, a)
-	a = clearAndType(t, a, "tailnet.internal")
+	a = keepRelays(t, clearAndType(t, a, "tailnet.internal"))
 
 	if a.mode != modeConfirm {
 		t.Fatalf("no confirm (mode %d, status %q)", a.mode, a.status)
@@ -141,6 +141,7 @@ func TestSwitchingToPlainHTTPClearsLetsEncrypt(t *testing.T) {
 	a = clearAndType(t, a, "http://203.0.113.10:443")
 	a = enter(t, a) // 0.0.0.0:443 already
 	a = enter(t, a) // tailnet.example.net
+	a = keepRelays(t, a)
 
 	removed, added := diffLines(a)
 	if !contains(removed, `tls_letsencrypt_hostname: "vpn.example.com"`) ||
@@ -207,7 +208,7 @@ func TestLetsEncryptFlow(t *testing.T) {
 		t.Fatalf("a conflicting base_domain was not refused (purpose %d, status %q)",
 			a.inputPurpose, a.status)
 	}
-	a = clearAndType(t, a, "tailnet.example.net")
+	a = keepRelays(t, clearAndType(t, a, "tailnet.example.net"))
 
 	if a.mode != modeConfirm {
 		t.Fatalf("no confirm (mode %d, status %q)", a.mode, a.status)
@@ -270,7 +271,7 @@ func TestOwnCertificateIsCheckedBeforeItIsWritten(t *testing.T) {
 		t.Fatalf("a readable pair did not move on (purpose %d, status %q)",
 			a.inputPurpose, a.status)
 	}
-	a = enter(t, a)
+	a = keepRelays(t, enter(t, a))
 	_, added := diffLines(a)
 	for _, want := range []string{
 		`tls_cert_path: "/etc/headscale/tls/headscale.example.com.crt"`,
@@ -306,7 +307,7 @@ func TestOwnCertificateFromTuiCert(t *testing.T) {
 		t.Fatalf("the issued pair did not move on (purpose %d, status %q)",
 			a.inputPurpose, a.status)
 	}
-	a = enter(t, a)
+	a = keepRelays(t, enter(t, a))
 	_, added := diffLines(a)
 	for _, want := range []string{
 		`tls_cert_path: "` + pair.CertPath + `"`,
@@ -403,7 +404,7 @@ func TestPlainHTTPWithOIDCSaysLoginsWillFail(t *testing.T) {
 	}
 	a = clearAndType(t, a, "http://203.0.113.10:443")
 	a = clearAndType(t, a, "0.0.0.0:443")
-	a = enter(t, a)
+	a = keepRelays(t, enter(t, a))
 	if a.mode != modeConfirm {
 		t.Fatalf("no confirm (mode %d, status %q)", a.mode, a.status)
 	}

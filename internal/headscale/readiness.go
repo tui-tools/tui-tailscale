@@ -104,6 +104,9 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	}
 	if h.Present && h.Firewall.Source != "" && r.ServerConfigured {
 		ports := PortsFor(h.Firewall, cp.ServerURL, cp.ListenAddr)
+		if port := STUNPort(cp); port > 0 {
+			ports.STUNPort, ports.STUN = port, h.Firewall.Check("udp", port)
+		}
 		r.Ports = &ports
 	}
 	r.FirstNode = len(h.Nodes) > 0
@@ -129,9 +132,14 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	r.RoutesApproved = r.RoutesPending == 0
 	r.CanJoinMore = r.OIDCConfigured || r.PreAuthKey
 	r.Relays = Relays(cp)
-	if h.Present && r.Relays == RelaysPublic {
+	switch {
+	case h.Present && r.Relays == RelaysPublic:
 		r.RelayHint = "relays go through Tailscale's public DERP servers when nodes cannot " +
-			"connect directly (derp.server.enabled is false)"
+			"connect directly (derp.server.enabled is false) · S enables the embedded one"
+	case h.Present && cp.DERPEmbedded && cp.ServerURL != "" && !ServerURLIsHTTPS(cp.ServerURL):
+		// Clients reach the relay over TLS on server_url's port only.
+		r.RelayHint = "the embedded DERP relay is on, but server_url is not https: " +
+			"clients reach the relay over TLS only, so they cannot use it"
 	}
 	if !r.CanJoinMore {
 		r.CanJoinMoreReason = joinMoreReason(h.PreAuthKeys, now)
@@ -194,9 +202,13 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	default:
 		r.Next = NextReady
 		r.NextStep = "ready · clients can log in and every advertised route is approved"
-		if r.Ports != nil && r.Ports.Node == PortClosed {
+		switch {
+		case r.Ports != nil && r.Ports.Node == PortClosed:
 			r.NextStep += " · " + strconv.Itoa(NodePort) + "/udp is closed here, so peers " +
 				"relay through DERP instead of connecting directly · " + firewallHint(h.Firewall)
+		case r.Ports != nil && r.Ports.STUN == PortClosed:
+			r.NextStep += " · " + strconv.Itoa(r.Ports.STUNPort) + "/udp (the embedded " +
+				"DERP relay's STUN) is closed here · " + firewallHint(h.Firewall)
 		}
 	}
 	return r

@@ -49,8 +49,11 @@ type Fake struct {
 	// server is still coming up.
 	absent, detected bool
 	refuse           int
-	// Launched records the tools f handed the terminal to, for the tests.
+	// Launched records the command lines f handed the terminal to, for the
+	// tests.
 	Launched []string
+	// FirewallVersion is what the demo's tui-firewall --version says.
+	FirewallVersion string
 	// pki is what the demo's tui-cert reports: one local CA and the pair it
 	// issued for the control plane.
 	pki LocalPKI
@@ -60,8 +63,15 @@ type Fake struct {
 	configMissing bool
 }
 
-// demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake.
-const demoNewPreAuthKey = "demodemodemodemodemodemodemodemodemodemo1234"
+// demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake, but
+// shaped like headscale 0.29's: hskey-auth-, a 12-character prefix, a dash and
+// a 64-character secret, 88 characters in all (issue #30 is about exactly
+// that length).
+const demoNewPreAuthKey = "hskey-auth-demodemodemo-" +
+	"demodemodemodemodemodemodemodemodemodemodemodemodemodemodemo0000"
+
+// demoNewPreAuthKeyPrefix is the part of it the list keeps.
+const demoNewPreAuthKeyPrefix = "hskey-auth-demodemodemo"
 
 // DemoServerURL is the demo control plane's server_url: the login server the
 // demo node of internal/tailscale is joined to.
@@ -75,7 +85,7 @@ const DemoServerURL = "https://headscale.example.com"
 func NewFake() *Fake {
 	f := &Fake{state: demoState(), config: demoHeadscaleConfig,
 		serviceState: "active", serviceEnabled: "disabled", stats: demoStats(),
-		detected: true, pki: DemoLocalPKI()}
+		detected: true, pki: DemoLocalPKI(), FirewallVersion: FirewallOpenSince}
 	f.run = &runner.Fake{Prefix: "sudo -n", Hook: f.apply}
 	f.reloadControlPlane()
 	return f
@@ -551,21 +561,37 @@ func (f *Fake) SetFirewallInstalled(installed bool) {
 
 // LaunchFirewall records the hand-over and starts nothing: the demo reaches
 // every key, and handing the terminal to a tool that may not be installed is
-// not something a demo may do.
-func (f *Fake) LaunchFirewall() (Process, error) {
+// not something a demo may do. The demo's tui-firewall is FirewallVersion.
+func (f *Fake) LaunchFirewall(h FirewallHandoff) (FirewallLaunch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.state.Firewall.Launchable {
-		return nil, fmt.Errorf("%s is not installed (it comes from pkgs.tui.tools)", FirewallTool)
+		return FirewallLaunch{}, ErrFirewallMissing
 	}
-	f.Launched = append(f.Launched, FirewallTool)
-	return &demoProcess{name: FirewallTool}, nil
+	args, err := h.Args()
+	if err != nil {
+		return FirewallLaunch{}, err
+	}
+	launch := FirewallLaunch{}
+	if len(args) > 0 {
+		if FirewallTakesOpen(f.FirewallVersion) {
+			launch.Prefilled = true
+		} else {
+			args = nil
+			launch.Hint = fallbackHint(h, f.FirewallVersion)
+		}
+	}
+	argv := append([]string{FirewallTool}, args...)
+	f.Launched = append(f.Launched, runner.Command{Argv: argv}.String())
+	launch.Process = &demoProcess{name: FirewallTool, argv: argv}
+	return launch, nil
 }
 
 // demoProcess is the hand-over that does not happen: it prints one line where
 // the tool would have drawn.
 type demoProcess struct {
 	name string
+	argv []string
 	out  io.Writer
 }
 
@@ -575,7 +601,7 @@ func (d *demoProcess) Run() error {
 	if out == nil {
 		out = os.Stdout
 	}
-	_, err := fmt.Fprintf(out, "demo: %s would run here, with the terminal to itself\n", d.name)
+	_, err := fmt.Fprintf(out, "demo: %s would run here, with the terminal to itself\n", d)
 	return err
 }
 
@@ -589,7 +615,12 @@ func (d *demoProcess) SetStdout(w io.Writer) { d.out = w }
 func (d *demoProcess) SetStderr(io.Writer) {}
 
 // String is the command line the real hand-over would run.
-func (d *demoProcess) String() string { return d.name }
+func (d *demoProcess) String() string {
+	if len(d.argv) == 0 {
+		return d.name
+	}
+	return runner.Command{Argv: d.argv}.String()
+}
 
 // DemoAuthID is the registration the demo has waiting: a laptop that ran
 // `tailscale up --login-server` and has not logged in yet.
@@ -739,7 +770,7 @@ func (f *Fake) createPreAuthKey(argv []string) (string, error) {
 	}
 	next := fmt.Sprintf("%d", len(f.state.PreAuthKeys)+1)
 	f.state.PreAuthKeys = append(f.state.PreAuthKeys, PreAuthKey{
-		ID: next, User: userName, KeyPrefix: demoNewPreAuthKey[:10],
+		ID: next, User: userName, KeyPrefix: demoNewPreAuthKeyPrefix,
 		Reusable: reusable, Ephemeral: ephemeral,
 		Expiration: time.Now().Add(d), CreatedAt: time.Now(),
 	})

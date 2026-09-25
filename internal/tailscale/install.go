@@ -118,14 +118,18 @@ var codenamePattern = regexp.MustCompile(`^[a-z]{2,32}$`)
 // tool has no plan for.
 const ManualInstallURL = "https://tailscale.com/download/linux"
 
-// buildInstall assembles the install plan for a distribution.
+// buildInstall assembles the install plan for a distribution: Tailscale's
+// own repository where the distribution has none carrying tailscale, then the
+// package through the kit's companion builder (tui-kit v0.4.4), then the
+// daemon started.
 func buildInstall(d Distro) (Plan, error) {
 	enable := runner.Command{
 		Argv:        []string{"systemctl", "enable", "--now", "tailscaled"},
 		Description: "Start tailscaled now and at boot",
 	}
 	plan := Plan{Action: ActionInstall, Title: "Install tailscale"}
-	switch d.Manager() {
+	manager := d.Manager()
+	switch manager {
 	case pkgmgr.ManagerAPT:
 		if !codenamePattern.MatchString(d.Codename) {
 			return Plan{}, fmt.Errorf("cannot tell this release's codename from %s; "+
@@ -141,13 +145,6 @@ func buildInstall(d Distro) (Plan, error) {
 				base + ".noarmor.gpg"}, Description: "Add Tailscale's signing key"},
 			{Argv: []string{"curl", "-fsSL", "-o", "/etc/apt/sources.list.d/tailscale.list",
 				base + ".tailscale-keyring.list"}, Description: "Add Tailscale's apt repository"},
-			// Both apt steps run non-interactively (pkgmgr.APTEnv): needrestart
-			// must not wait on a prompt behind the TUI (issue #23).
-			{Argv: []string{"apt-get", "update"}, Env: pkgmgr.APTEnv(),
-				Description: "Refresh the package lists"},
-			{Argv: []string{"apt-get", "install", "-y", "tailscale"}, Env: pkgmgr.APTEnv(),
-				Description: "Install tailscale"},
-			enable,
 		}
 	case pkgmgr.ManagerDNF:
 		repo := PkgsBase + "/" + d.rpmFamily() + "/tailscale.repo"
@@ -159,24 +156,12 @@ func buildInstall(d Distro) (Plan, error) {
 		plan.Steps = []runner.Command{
 			{Argv: []string{"curl", "-fsSL", "-o", "/etc/yum.repos.d/tailscale.repo", repo},
 				Description: "Add Tailscale's dnf repository"},
-			{Argv: []string{"dnf", "install", "-y", "tailscale"}, Description: "Install tailscale"},
-			enable,
 		}
 	case pkgmgr.ManagerPacman:
 		if d.Omarchy() {
-			// The kit's rule for Omarchy (pkgmgr.BuildInstallOn): its pacman
-			// hook refuses any -Syu that does not come from `omarchy update`,
-			// so the package is installed against the databases the last
-			// update synced, without -y. The kit's builders take tui-* names
-			// only, so the step itself is built here.
 			plan.Body = "tailscale is in Arch's own repositories. " + pkgmgr.OmarchyNote +
 				" Then tailscaled is started."
-			plan.Steps = []runner.Command{
-				{Argv: []string{"pacman", "-S", "--needed", "--noconfirm", "tailscale"},
-					Description: "Install tailscale"},
-				enable,
-			}
-			return plan, nil
+			break
 		}
 		// Arch has no supported way to install one package against a
 		// refreshed database without upgrading the rest (a bare -Sy is a
@@ -187,11 +172,6 @@ func buildInstall(d Distro) (Plan, error) {
 			"package database and installs it — and, because Arch supports no partial " +
 			"upgrade, upgrades the rest of the machine with it (-Syu). Then tailscaled " +
 			"is started."
-		plan.Steps = []runner.Command{
-			{Argv: []string{"pacman", "-Syu", "--needed", "--noconfirm", "tailscale"},
-				Description: "Upgrade the system and install tailscale"},
-			enable,
-		}
 	default:
 		name := d.String()
 		if name == "" {
@@ -199,8 +179,30 @@ func buildInstall(d Distro) (Plan, error) {
 		}
 		return Plan{}, fmt.Errorf("no install plan for %s; see %s", name, ManualInstallURL)
 	}
+	// The package steps follow the kit's rule for each distribution: a
+	// refresh then a non-interactive `apt-get install -y` (pkgmgr.APTEnv, so
+	// needrestart never waits on a prompt behind the TUI, issue #23), `dnf
+	// install -y`, `pacman -Syu --needed` on Arch and a plain `pacman -S
+	// --needed` on Omarchy, whose pacman hook refuses any -Syu that does not
+	// come from `omarchy update`. The name is bare: tailscale comes from
+	// Tailscale's repository or the distribution's own.
+	steps, err := pkgmgr.BuildCompanionInstallOn(manager, d.Distro, []string{PackageName})
+	if err != nil {
+		return Plan{}, err
+	}
+	for _, step := range steps {
+		// The body already says why Omarchy's step is not -Syu; the step's
+		// own line stays short.
+		plan.Steps = append(plan.Steps, runner.Command{Argv: step.Argv,
+			Description: strings.TrimSuffix(step.Explain, ". "+pkgmgr.OmarchyNote),
+			Stdin:       step.Stdin, Env: step.Env})
+	}
+	plan.Steps = append(plan.Steps, enable)
 	return plan, nil
 }
+
+// PackageName is the client's package name in every repository it comes from.
+const PackageName = "tailscale"
 
 // InstallInstructions is the plan for this distribution as lines a person can
 // read or copy — the node screen's text when tailscale is absent, and the

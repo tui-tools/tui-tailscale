@@ -11,11 +11,12 @@ import (
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
-// TestPreAuthKeyIsShownOnceAndNotStored drives create on the keys screen and
-// asserts the contract: the full key appears once in the status line with the
-// copy-now note, and the reloaded list still carries only a prefix.
-func TestPreAuthKeyIsShownOnceAndNotStored(t *testing.T) {
+// createKey drives create on the keys screen through its confirm, at a given
+// terminal width, and returns the app with the key's notice open.
+func createKey(t *testing.T, width int) *app {
+	t.Helper()
 	a := newCPApp(t)
+	a.width, a.height = width, 34
 	a.setScreen(screenKeys)
 	model, _ := a.Update(key("n"))
 	a = model.(*app)
@@ -28,15 +29,27 @@ func TestPreAuthKeyIsShownOnceAndNotStored(t *testing.T) {
 		t.Fatalf("preview = %q", a.confirm.Command)
 	}
 	a = confirmAndRun(t, a)
-
-	if !strings.Contains(a.status, "shown once") || !strings.Contains(a.status, "copy") {
-		t.Errorf("status does not carry the one-time note: %q", a.status)
+	if a.mode != modeNotice || !a.notice.secret {
+		t.Fatalf("no key notice (mode %d): %q", a.mode, a.status)
 	}
-	// The status is the one place the key appears; pull it back out.
-	parts := strings.Split(a.status, ": ")
-	fullKey := parts[len(parts)-1]
-	if len(fullKey) < 20 {
-		t.Fatalf("status does not show the key: %q", a.status)
+	return a
+}
+
+// TestPreAuthKeyIsShownOnceAndNotStored drives create on the keys screen and
+// asserts the contract: the full key appears once, on the notice's own line,
+// the status line never carries it, and the reloaded list keeps a prefix.
+func TestPreAuthKeyIsShownOnceAndNotStored(t *testing.T) {
+	a := createKey(t, 120)
+	fullKey := a.notice.copyable
+	if len(fullKey) != 88 {
+		t.Fatalf("the demo key is not headscale 0.29-shaped: %q", fullKey)
+	}
+	if strings.Contains(a.status, fullKey) || !strings.Contains(a.status, "shown once") {
+		t.Errorf("status = %q", a.status)
+	}
+	// At 120 columns the key is one line, flush left, whole (issue #30).
+	if !hasLine(a.View(), fullKey) {
+		t.Errorf("the key is not on a line of its own:\n%s", a.View())
 	}
 	state, _ := a.hs.Load(t.Context())
 	for _, k := range state.PreAuthKeys {
@@ -44,11 +57,75 @@ func TestPreAuthKeyIsShownOnceAndNotStored(t *testing.T) {
 			t.Error("the state stores the full key")
 		}
 	}
+	// Any key closes the notice and forgets the key.
+	model, _ := a.Update(key("q"))
+	a = model.(*app)
+	if a.mode != modeBrowse || a.notice.copyable != "" {
+		t.Fatalf("the notice did not close and forget (mode %d)", a.mode)
+	}
 	// And the view renders prefixes, never the full key.
 	a.hsState = state
-	a.setStatus(0, "")
 	if strings.Contains(a.View(), fullKey) {
 		t.Error("the keys table renders the full key")
+	}
+}
+
+// hasLine reports whether view has a line that is exactly want.
+func hasLine(view, want string) bool {
+	for _, l := range strings.Split(view, "\n") {
+		if l == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPreAuthKeyNeverCut: in a terminal narrower than the key no part of it
+// is drawn; the notice says how wide it has to be, the key appears whole once
+// the window is widened, and w offers the root-only file instead (issue #30).
+func TestPreAuthKeyNeverCut(t *testing.T) {
+	a := createKey(t, 80)
+	fullKey := a.notice.copyable
+	view := a.View()
+	if strings.Contains(view, fullKey[:20]) {
+		t.Errorf("a part of the key is drawn at 80 columns:\n%s", view)
+	}
+	if !strings.Contains(view, "needs 88") || !strings.Contains(view, "w") {
+		t.Errorf("the notice does not say why or what to do:\n%s", view)
+	}
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
+	a = model.(*app)
+	if !hasLine(a.View(), fullKey) {
+		t.Errorf("widened to 100, the key is not shown whole:\n%s", a.View())
+	}
+}
+
+// TestPreAuthKeyWrittenToFile: w previews the write to /run, the preview and
+// the argv never carry the key, a cancel brings the notice back, and a
+// confirmed write forgets it (issue #30).
+func TestPreAuthKeyWrittenToFile(t *testing.T) {
+	a := createKey(t, 80)
+	fullKey := a.notice.copyable
+	model, _ := a.Update(key("w"))
+	a = model.(*app)
+	if a.mode != modeConfirm || strings.Contains(a.confirm.Command, fullKey) ||
+		strings.Contains(a.confirm.Body, fullKey) ||
+		!strings.Contains(a.confirm.Command, "install -D -m 600 /dev/stdin /run/tui-tailscale/preauth-") {
+		t.Fatalf("write preview (mode %d) = %q", a.mode, a.confirm.Command)
+	}
+	model, _ = a.Update(key("n"))
+	a = model.(*app)
+	if a.mode != modeNotice || a.notice.copyable != fullKey {
+		t.Fatalf("a cancelled write lost the key (mode %d): %q", a.mode, a.status)
+	}
+	model, _ = a.Update(key("w"))
+	a = model.(*app)
+	a = confirmAndRun(t, a)
+	if a.mode != modeBrowse || a.notice.copyable != "" || a.keyNotice.copyable != "" {
+		t.Errorf("the key outlived its write (mode %d)", a.mode)
+	}
+	if !strings.Contains(a.status, "/run/tui-tailscale/preauth-") || strings.Contains(a.status, fullKey) {
+		t.Errorf("status = %q", a.status)
 	}
 }
 

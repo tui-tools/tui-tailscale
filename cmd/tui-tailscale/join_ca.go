@@ -40,7 +40,7 @@ func (a *app) checkJoinTLS(server string) tea.Cmd {
 		detail := ""
 		if err != nil {
 			detail = runner.FirstLine(err.Error())
-			if first := runner.FirstLine(out); first != "" {
+			if first := runner.StatusLine(out); first != "" {
 				detail = first
 			}
 		}

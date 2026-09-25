@@ -161,8 +161,10 @@ type Backend interface {
 	// LaunchFirewall prepares the hand-over of the terminal to tui-firewall,
 	// the family's tool for opening the ports the readiness line reports
 	// closed. It is not a change and is not previewed as one: tui-firewall
-	// previews and confirms whatever it changes.
-	LaunchFirewall() (Process, error)
+	// previews and confirms whatever it changes. The ports it is handed are
+	// the ones readiness found closed, which it opens its add form with
+	// (issue #32); an older tui-firewall is launched plain, with a hint.
+	LaunchFirewall(h FirewallHandoff) (FirewallLaunch, error)
 	// ReadLocalPKI reads the local CAs tui-cert keeps here and the pairs they
 	// issued — a read, unprivileged, with no confirm. tui-cert not being
 	// installed is an answer (Installed false), not an error.

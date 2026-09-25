@@ -2,6 +2,7 @@ package headscale
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/tui-tools/tui-kit/pkgmgr"
@@ -164,42 +165,35 @@ func buildInstall(d pkgmgr.Distro, repo RepoState, pkg string) (Plan, error) {
 			"repository file names it, and the plan stops there if it differs.")
 	} else {
 		body = append(body, "The tui-tools package repository is already configured here.")
-		if manager == pkgmgr.ManagerAPT {
-			refresh, err := pkgmgr.BuildRefresh(manager)
-			if err != nil {
-				return Plan{}, err
-			}
-			plan.Steps = append(plan.Steps, fromPkgmgr(refresh))
-		}
 	}
-	switch manager {
-	case pkgmgr.ManagerAPT:
-		plan.Steps = append(plan.Steps, runner.Command{
-			Argv: []string{"apt-get", "install", "-y", pkg}, Env: pkgmgr.APTEnv(), Description: what})
-	case pkgmgr.ManagerDNF:
-		plan.Steps = append(plan.Steps, runner.Command{
-			Argv: []string{"dnf", "install", "-y", pkg}, Description: what})
-	case pkgmgr.ManagerPacman:
-		// Arch carries a headscale of its own; the repository-qualified name
-		// installs the family's source-built mirror whatever the repository
-		// order in pacman.conf. The kit's install builders take tui-* names
-		// only, so the step is built here, following the kit's rule for the
-		// distribution: on Omarchy, whose pacman hook refuses a direct -Syu,
-		// a plain -S against the databases the repository setup (or the last
-		// `omarchy update`) synced; on Arch, which supports no partial
-		// upgrade, -Syu.
-		if d.Omarchy() {
-			plan.Steps = append(plan.Steps, runner.Command{
-				Argv:        []string{"pacman", "-S", "--needed", "--noconfirm", "tui-tools/" + pkg},
-				Description: what})
-			body = append(body, pkgmgr.OmarchyNote)
-			break
+	// The package steps are the kit's companion builders (tui-kit v0.4.4), so
+	// they follow the family's rule for each distribution: a refresh then a
+	// non-interactive `apt-get install -y` (pkgmgr.APTEnv) on apt, `dnf
+	// install -y`, `pacman -Syu --needed` on Arch, which supports no partial
+	// upgrade, and a plain `pacman -S --needed` on Omarchy, whose pacman hook
+	// refuses a direct -Syu. The target is repository-qualified: Arch carries
+	// a headscale of its own, and pacman then installs the family's
+	// source-built mirror whatever the repository order in pacman.conf; the
+	// kit drops the qualifier for apt and dnf.
+	steps, err := pkgmgr.BuildCompanionInstallOn(manager, d, []string{companionTarget(pkg)})
+	if err != nil {
+		return Plan{}, err
+	}
+	for _, step := range steps {
+		// The repository setup already ends with the refresh the apt
+		// builder starts with: it is not run twice in a row.
+		if n := len(plan.Steps); n > 0 && slices.Equal(plan.Steps[n-1].Argv, step.Argv) {
+			continue
 		}
-		plan.Steps = append(plan.Steps, runner.Command{
-			Argv:        []string{"pacman", "-Syu", "--needed", "--noconfirm", "tui-tools/" + pkg},
-			Description: "Upgrade the system and install " + pkg})
-		body = append(body, "pacman refreshes the package databases and, because Arch "+
-			"supports no partial upgrade, upgrades the rest of the machine along with it (-Syu).")
+		plan.Steps = append(plan.Steps, fromPkgmgr(step))
+	}
+	if manager == pkgmgr.ManagerPacman {
+		if d.Omarchy() {
+			body = append(body, pkgmgr.OmarchyNote)
+		} else {
+			body = append(body, "pacman refreshes the package databases and, because Arch "+
+				"supports no partial upgrade, upgrades the rest of the machine along with it (-Syu).")
+		}
 	}
 	plan.Body = strings.Join(body, "\n\n")
 	return plan, nil
@@ -250,11 +244,21 @@ func BuildReinstall(d pkgmgr.Distro) (Plan, error) {
 	return plan, nil
 }
 
+// RepoName is the tui-tools repository's name, the qualifier pacman takes.
+const RepoName = "tui-tools"
+
+// companionTarget is the install target of a package from the tui-tools
+// repository: repository-qualified, as pacman writes it.
+func companionTarget(pkg string) string { return RepoName + "/" + pkg }
+
 // fromPkgmgr turns a kit package-manager command into the runner command this
 // package runs. Its environment comes along: every apt step of the kit runs
 // non-interactively (pkgmgr.APTEnv, issue #23).
 func fromPkgmgr(c pkgmgr.Command) runner.Command {
-	return runner.Command{Argv: c.Argv, Description: c.Explain, Stdin: c.Stdin, Env: c.Env}
+	// The plan's body already says why Omarchy's step is not -Syu; the
+	// step's own line stays short.
+	return runner.Command{Argv: c.Argv, Description: strings.TrimSuffix(c.Explain, ". "+pkgmgr.OmarchyNote),
+		Stdin: c.Stdin, Env: c.Env}
 }
 
 // InstallInstructions is the plan for this distribution as lines a person can

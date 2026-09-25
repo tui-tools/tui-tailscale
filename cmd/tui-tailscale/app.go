@@ -65,6 +65,8 @@ const (
 	inputTLSCertPath
 	inputTLSKeyPath
 	inputBaseDomain
+	// The embedded DERP relay's STUN address, when S's relay step enables it.
+	inputDERPSTUN
 	// The OIDC form, in the order the fields are asked for.
 	inputOIDCIssuer
 	inputOIDCClientID
@@ -99,9 +101,11 @@ const (
 	// than typed words so there is nothing to spell wrong.
 	pickerOIDCOnlyStart
 	pickerOIDCPKCE
-	// The server-settings form's two choices.
+	// The server-settings form's choices: the transport, the ACME
+	// challenge, and where the relays come from.
 	pickerTransport
 	pickerACMEChallenge
+	pickerRelays
 	// The OIDC form's first step: which identity provider.
 	pickerOIDCProvider
 	// The dns screen's switches, and what n adds there.
@@ -179,6 +183,13 @@ type app struct {
 	exitChoices map[string]string
 	join        joinDraft
 	notice      notice
+	// keyNotice is the shown-once key's notice while its file write is
+	// confirmed and runs: it comes back if the write is cancelled or fails,
+	// and is forgotten once the file holds the key.
+	keyNotice notice
+	// firewallHint is the status line for when tui-firewall hands the
+	// terminal back, set when it was too old to take the ports (issue #32).
+	firewallHint string
 	// filePicker is the open file picker; its purpose is inputPurpose, since
 	// it answers the steps a typed path used to. files is the filesystem it
 	// lists: nil is this machine's, --demo a made-up tree.
@@ -587,9 +598,15 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case firewallDoneMsg:
 		a.busy = false
-		if msg.err != nil {
+		hint := a.firewallHint
+		a.firewallHint = ""
+		switch {
+		case msg.err != nil:
 			a.setStatus(ui.StatusError, "tui-firewall: "+runner.FirstLine(msg.err.Error()))
-		} else {
+		case hint != "":
+			// An older tui-firewall got no ports: say which to add.
+			a.setStatus(ui.StatusWarn, hint)
+		default:
 			a.setStatus(ui.StatusInfo, "back from tui-firewall · the ports are read again")
 		}
 		return a, a.reprobeRead(false)
@@ -767,6 +784,7 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		a.join = joinDraft{}
 		a.cpDraft.forgetSecret()
+		a.notice, a.keyNotice = notice{}, notice{}
 		return a, tea.Quit
 	}
 	if a.busy {
@@ -782,7 +800,15 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.handlePicker(msg)
 	case modeFilePicker:
 		return a.handleFilePicker(msg)
-	case modeHelp, modeNotice:
+	case modeNotice:
+		if a.notice.secret && msg.String() == "w" {
+			return a, a.openWriteShownOnceKey()
+		}
+		// Closing the notice forgets whatever it showed.
+		a.notice = notice{}
+		a.mode = modeBrowse
+		return a, nil
+	case modeHelp:
 		a.mode = modeBrowse
 		return a, nil
 	default:
@@ -800,6 +826,14 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	confirmed := a.confirm.Confirmed
 	payload := a.confirm.Payload
 	a.confirm = ui.Confirm{}
+	if !confirmed && a.keyNotice.secret {
+		// The shown-once key was not written: it is still only on the
+		// notice it came from, which comes back.
+		a.notice, a.keyNotice = a.keyNotice, notice{}
+		a.mode = modeNotice
+		a.setStatus(ui.StatusInfo, "not written · the key is still shown here only")
+		return a, nil
+	}
 	if !confirmed || payload == nil {
 		// The plan — and a pre-auth key or a client secret on its stdin —
 		// goes with the dialog. Cancelling also abandons whatever step a
@@ -957,6 +991,8 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.tookTransport(choice)
 	case pickerACMEChallenge:
 		return a, a.tookChallenge(choice)
+	case pickerRelays:
+		return a, a.tookRelays(choice)
 	case pickerOIDCProvider:
 		return a, a.tookOIDCProvider(choice)
 	case pickerDNSMagic:
@@ -1208,6 +1244,12 @@ type notice struct {
 	// wrapped: a terminal selection across a frame picks up the border
 	// characters, and a wrapped URL is two half URLs.
 	copyable string
+	// secret marks a copyable value that is shown once and never stored: a
+	// created pre-auth key (issue #30). It is never cut: a terminal too
+	// narrow for it gets no partial value, only the choice of widening the
+	// window or writing it to a root-only file (w). Closing the notice
+	// forgets it.
+	secret bool
 }
 
 // openNotice opens a message the user only has to read.
