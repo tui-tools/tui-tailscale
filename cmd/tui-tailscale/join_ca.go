@@ -14,8 +14,8 @@ import (
 // This file is the private-CA step of j (issue #15): before a join to an
 // https login server, its certificate is checked from this machine against
 // the system trust store; when its issuer is unknown here, the join says so
-// before tailscale up can fail on it, and offers to trust the CA — typed as a
-// path, previewed per distribution — and then goes on.
+// before tailscale up can fail on it, and offers to trust the CA — one tui-cert
+// keeps here, or a file picked — previewed per distribution, and then goes on.
 
 // joinTLSMsg carries the certificate check of the login server.
 type joinTLSMsg struct {
@@ -61,7 +61,12 @@ func (a *app) tookJoinTLS(msg joinTLSMsg) tea.Cmd {
 		a.setStatusf(ui.StatusOK, "the certificate of %s verifies", host)
 		a.askJoinKey()
 	case tailscale.TLSUntrusted:
-		a.askJoinCA("", nil, msg.detail)
+		// The CAs tui-cert keeps here come first, by name; the file picker
+		// is the way to a CA certificate copied over from elsewhere.
+		a.joinTLSDetail = msg.detail
+		a.setStatusf(ui.StatusWarn, "the certificate of %s does not verify here · "+
+			"looking for its CA…", host)
+		return a.readLocalPKI(pkiForJoin)
 	case tailscale.TLSMismatch:
 		a.setStatusf(ui.StatusWarn, "the certificate of %s is not issued for that name (%s): "+
 			"tailscale will refuse it, and trusting a CA does not change that", host, msg.detail)
@@ -74,7 +79,7 @@ func (a *app) tookJoinTLS(msg joinTLSMsg) tea.Cmd {
 	return nil
 }
 
-// askJoinCA asks for the CA certificate to trust.
+// askJoinCA asks for the CA certificate to trust, in the file picker.
 func (a *app) askJoinCA(value string, problem error, detail string) {
 	host := tailscale.URLHost(a.join.server)
 	help := "The certificate of " + host + " does not verify against this machine's trust " +
@@ -83,11 +88,14 @@ func (a *app) askJoinCA(value string, problem error, detail string) {
 		help += " (" + detail + ")"
 	}
 	help += ", so tailscale up would fail. A control plane on a private tailnet is usually " +
-		"served with a certificate from a local CA (tui-cert's): give the path of that CA's " +
-		"certificate (PEM) and the next dialog previews adding it to the trust store. Empty " +
-		"stops the join."
-	// FilePicker: tui-kit #23
-	a.openRetry(inputJoinCA, "Trust the CA of "+host+"?", "/etc/tui-cert/ca.crt", value, help, problem)
+		"served with a certificate from a local CA: pick that CA's certificate (PEM; " +
+		"tui-cert's x on the control plane copies it to " + localCADir + ") and the " +
+		"next dialog previews adding it to the trust store. esc stops the join."
+	if hint := a.pkiHint(false); hint != "" {
+		help += "\n\n" + hint
+	}
+	a.openFilePicker(inputJoinCA, "Trust the CA of "+host+"?", help,
+		pickerStart(value, a.caStart()), certExtensions, problem)
 }
 
 // tookJoinCA builds the trust step for the typed CA.

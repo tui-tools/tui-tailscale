@@ -1,0 +1,192 @@
+{
+  "tool": "tui-cert",
+  "version": "0.3.0",
+  "backend": "pki",
+  "describe": "demo (an in-memory machine)",
+  "certificates": 9,
+  "certs": [
+    {
+      "path": "/etc/ssl/tui-cert/legacy.example.net.crt",
+      "source": "system",
+      "subject": "legacy.example.net",
+      "sans": [
+        "legacy.example.net"
+      ],
+      "issuer": "self-signed",
+      "notAfter": "2026-08-22T06:05:37Z",
+      "daysLeft": -33,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "risk",
+      "keyMatches": true,
+      "findings": [
+        "expired",
+        "key-world-readable",
+        "san-mismatch"
+      ]
+    },
+    {
+      "path": "/etc/letsencrypt/live/shop.example.com/fullchain.pem",
+      "source": "letsencrypt",
+      "subject": "shop.example.com",
+      "sans": [
+        "shop.example.com"
+      ],
+      "issuer": "Let's Encrypt",
+      "notAfter": "2026-09-30T06:05:37Z",
+      "daysLeft": 5,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "risk",
+      "keyMatches": true,
+      "findings": [
+        "expiring"
+      ]
+    },
+    {
+      "path": "/etc/pki/tls/certs/intranet.example.internal.crt",
+      "source": "system",
+      "subject": "intranet.example.internal",
+      "sans": [
+        "intranet.example.internal"
+      ],
+      "issuer": "internal CA",
+      "notAfter": "2027-04-23T06:05:37Z",
+      "daysLeft": 210,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "risk",
+      "keyMatches": false,
+      "findings": [
+        "key-mismatch",
+        "chain-incomplete",
+        "san-mismatch"
+      ],
+      "issuerUntrusted": true
+    },
+    {
+      "path": "/etc/ssl/private/api.example.com.pem",
+      "source": "system",
+      "subject": "api.example.com",
+      "sans": [
+        "api.example.com"
+      ],
+      "issuer": "Let's Encrypt",
+      "notAfter": "2026-10-16T06:05:37Z",
+      "daysLeft": 21,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "warn",
+      "keyMatches": true,
+      "usedBy": "nginx",
+      "findings": [
+        "expiring",
+        "key-world-readable"
+      ]
+    },
+    {
+      "path": "/etc/tui-cert/issued/nas.example.internal/fullchain.pem",
+      "source": "local CA",
+      "subject": "nas.example.internal",
+      "sans": [
+        "nas.example.internal"
+      ],
+      "issuer": "internal CA",
+      "notAfter": "2027-04-13T06:05:37Z",
+      "daysLeft": 200,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "warn",
+      "keyMatches": true,
+      "findings": [
+        "issuer-untrusted"
+      ],
+      "localCA": "homelab-ca",
+      "issuerUntrusted": true
+    },
+    {
+      "path": "/etc/tui-cert/issued/headscale.example.internal/fullchain.pem",
+      "source": "local CA",
+      "subject": "headscale.example.internal",
+      "sans": [
+        "headscale.example.internal",
+        "192.0.2.10"
+      ],
+      "issuer": "internal CA",
+      "notAfter": "2027-10-10T06:05:37Z",
+      "daysLeft": 380,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "warn",
+      "keyMatches": true,
+      "findings": [
+        "issuer-untrusted"
+      ],
+      "localCA": "homelab-ca",
+      "issuerUntrusted": true
+    },
+    {
+      "path": "/etc/ssl/tui-cert/wildcard.dev.example.com.crt",
+      "source": "system",
+      "subject": "*.dev.example.com",
+      "sans": [
+        "*.dev.example.com",
+        "dev.example.com"
+      ],
+      "issuer": "Let's Encrypt",
+      "notAfter": "2026-11-09T06:05:37Z",
+      "daysLeft": 45,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "ok",
+      "keyMatches": true
+    },
+    {
+      "path": "/etc/letsencrypt/live/example.com/fullchain.pem",
+      "source": "letsencrypt",
+      "subject": "example.com",
+      "sans": [
+        "example.com",
+        "www.example.com"
+      ],
+      "issuer": "Let's Encrypt",
+      "notAfter": "2026-11-26T06:05:37Z",
+      "daysLeft": 62,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "ok",
+      "keyMatches": true
+    },
+    {
+      "path": "/etc/ssl/private/old-mail.example.org.pem",
+      "source": "system",
+      "subject": "mail.example.org",
+      "sans": [
+        "mail.example.org"
+      ],
+      "issuer": "Let's Encrypt",
+      "notAfter": "2027-01-23T06:05:37Z",
+      "daysLeft": 120,
+      "keyType": "ECDSA",
+      "keyBits": 256,
+      "verdict": "ok"
+    }
+  ],
+  "localCAs": 1,
+  "cas": [
+    {
+      "name": "homelab-ca",
+      "certPath": "/etc/tui-cert/ca/homelab-ca/ca.crt",
+      "subject": "homelab-ca",
+      "fingerprint": "E5:E4:B9:80:4A:92:BE:FC:93:17:41:95:22:35:46:ED:7A:29:4D:BA:27:18:B6:3A:38:D1:4C:73:E7:DE:1C:91",
+      "notAfter": "2035-09-25T04:35:37Z",
+      "daysLeft": 3286,
+      "keyType": "ECDSA",
+      "canIssue": true,
+      "trusted": false,
+      "issued": 2,
+      "verdict": "ok"
+    }
+  ],
+  "trustStore": "debian"
+}

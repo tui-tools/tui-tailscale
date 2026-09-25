@@ -29,6 +29,8 @@ const (
 	// modeNotice is a message with nothing to decide: the login URL a
 	// browser join prints.
 	modeNotice
+	// modeFilePicker is the kit's file picker: a certificate, a key or a CA.
+	modeFilePicker
 )
 
 // inputPurpose records what an open text input is collecting.
@@ -109,6 +111,9 @@ const (
 	// R's two questions: which waiting registration, as which user.
 	pickerRegistration
 	pickerRegisterUser
+	// The pairs and CAs tui-cert reports, offered before the file picker.
+	pickerIssuedPair
+	pickerJoinCA
 )
 
 // pickerYes and pickerNo are the two options of a boolean picker; noExitNode
@@ -174,6 +179,19 @@ type app struct {
 	exitChoices map[string]string
 	join        joinDraft
 	notice      notice
+	// filePicker is the open file picker; its purpose is inputPurpose, since
+	// it answers the steps a typed path used to. files is the filesystem it
+	// lists: nil is this machine's, --demo a made-up tree.
+	filePicker ui.FilePicker
+	files      ui.FileSystem
+	// pki is tui-cert's last report; pairChoices and caChoices map a pick
+	// list's option to the pair or CA certificate it stands for.
+	pki         headscale.LocalPKI
+	pairChoices map[string]headscale.IssuedPair
+	caChoices   map[string]string
+	// joinTLSDetail is why the login server's certificate did not verify,
+	// kept for the CA step's help.
+	joinTLSDetail string
 
 	// profiles are the join profiles (issue #4); profileChoices maps a
 	// profile picker's option to the profile name or login profile id it
@@ -207,9 +225,14 @@ type app struct {
 
 	status     string
 	statusKind ui.StatusKind
-	loading    bool
-	loadFailed bool
-	busy       bool
+	// running names the plan that is running, and runningSince when it
+	// started: an install downloads for minutes, and the status line counts
+	// the time so the screen is not mistaken for frozen.
+	running      string
+	runningSince time.Time
+	loading      bool
+	loadFailed   bool
+	busy         bool
 
 	// probe re-reads the backends' versions for the header; nil keeps the
 	// ones the app started with (tests).
@@ -530,8 +553,16 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		return a, a.load()
 
+	case ui.RunningTickMsg:
+		if a.running == "" {
+			// The plan returned; the tick stops here.
+			return a, nil
+		}
+		a.setStatus(ui.StatusInfo, ui.RunningMessage(a.running, time.Since(a.runningSince)))
+		return a, runningTick()
+
 	case planRanMsg:
-		a.busy = false
+		a.busy, a.running = false, ""
 		a.planResult(msg)
 		if msg.plan.Action == tailscale.ActionTrustCA && msg.err == nil && a.join.server != "" {
 			// The CA is trusted now: check again, and go on with the join.
@@ -540,7 +571,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.reloadAfterChange()
 
 	case hsPlanRanMsg:
-		a.busy = false
+		a.busy, a.running = false, ""
 		a.loading = true
 		if msg.err != nil {
 			a.setStatus(ui.StatusError, runner.FirstLine(msg.err.Error()))
@@ -561,13 +592,19 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case joinTLSMsg:
 		return a, a.tookJoinTLS(msg)
 
+	case localPKIMsg:
+		return a, a.tookLocalPKI(msg)
+
 	case tea.KeyMsg:
 		return a.handleKey(msg)
 	}
 
-	if a.mode == modeInput {
+	switch a.mode {
+	case modeInput:
 		cmd, _ := a.input.Update(msg)
 		return a, cmd
+	case modeFilePicker:
+		return a.handleFilePicker(msg)
 	}
 	return a, nil
 }
@@ -632,12 +669,38 @@ func (a *app) planResult(msg planRanMsg) {
 		// nothing about the result.
 		a.setStatus(ui.StatusOK, "tailscale installed · j joins a tailnet")
 	default:
+		if summary := routingSummary(msg.plan); summary != "" {
+			a.setStatus(ui.StatusOK, summary)
+			return
+		}
 		summary := strings.TrimSpace(msg.output)
 		if summary == "" {
 			summary = "done"
 		}
 		a.setStatusf(ui.StatusOK, "%s: %s", msg.plan.Title, runner.FirstLine(summary))
 	}
+}
+
+// routingSummary is the status line after an exit-node or subnet-route offer.
+// Their plans turn on IP forwarding first, and the first line of their output
+// is sysctl's echo of it ("net.ipv4.ip_forward = 1"), which says nothing about
+// the result; what is left to do, the approval on the control plane, does.
+func routingSummary(plan tailscale.Plan) string {
+	// An offer carries the forwarding steps; a withdrawal is the flag alone.
+	offered := len(plan.Steps) > 1
+	switch plan.Action {
+	case tailscale.ActionAdvertiseExitNode:
+		if offered {
+			return "exit node offered · approve it on the control plane"
+		}
+		return "no longer offered as an exit node"
+	case tailscale.ActionAdvertiseRoutes:
+		if offered {
+			return "routes advertised · approve them on the control plane"
+		}
+		return "no subnet routes advertised"
+	}
+	return ""
 }
 
 // cleanupMessage is the status line for a cleanup that failed.
@@ -664,6 +727,8 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.handleInput(msg)
 	case modePicker:
 		return a.handlePicker(msg)
+	case modeFilePicker:
+		return a.handleFilePicker(msg)
 	case modeHelp, modeNotice:
 		a.mode = modeBrowse
 		return a, nil
@@ -695,11 +760,9 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	a.busy = true
 	switch p := payload.(type) {
 	case tailscale.Plan:
-		a.setStatusf(ui.StatusInfo, "running %s…", p.Title)
-		return a, a.runPlan(p)
+		return a, tea.Batch(a.runPlan(p), a.startRunning(p.Title))
 	case headscale.Plan:
-		a.setStatusf(ui.StatusInfo, "running %s…", p.Title)
-		return a, a.runHSPlan(p)
+		return a, tea.Batch(a.runHSPlan(p), a.startRunning(p.Title))
 	case runner.Command:
 		a.setStatusf(ui.StatusInfo, "running %s…", a.hs.Preview(p))
 		return a, a.run(p)
@@ -707,6 +770,18 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	a.busy = false
 	return a, nil
 }
+
+// startRunning puts a plan's name and its elapsed time on the status line,
+// refreshed every second until the plan returns.
+func (a *app) startRunning(title string) tea.Cmd {
+	a.running, a.runningSince = title, time.Now()
+	a.setStatus(ui.StatusInfo, ui.RunningMessage(title, 0))
+	return runningTick()
+}
+
+// runningTick schedules the next refresh of the running message. Tests swap
+// it for one that schedules nothing, since the real one sleeps a second.
+var runningTick = ui.RunningTick
 
 // handleInput resolves an open text input.
 func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -784,6 +859,7 @@ func (a *app) cancelled() {
 	a.profileChoices = nil
 	a.saveDraft = tailscale.JoinProfile{}
 	a.registerDraft = ""
+	a.pairChoices, a.caChoices = nil, nil
 	a.cpDraft.forgetSecret()
 	a.setStatus(ui.StatusInfo, "cancelled")
 }
@@ -840,6 +916,10 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.tookRegistration(choice)
 	case pickerRegisterUser:
 		return a, a.tookRegisterUser(choice)
+	case pickerIssuedPair:
+		return a, a.tookIssuedPair(choice)
+	case pickerJoinCA:
+		return a, a.tookLocalCA(choice)
 	}
 	return a, nil
 }

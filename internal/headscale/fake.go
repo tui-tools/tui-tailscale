@@ -51,6 +51,9 @@ type Fake struct {
 	refuse           int
 	// Launched records the tools f handed the terminal to, for the tests.
 	Launched []string
+	// pki is what the demo's tui-cert reports: one local CA and the pair it
+	// issued for the control plane.
+	pki LocalPKI
 }
 
 // demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake.
@@ -68,7 +71,7 @@ const DemoServerURL = "https://headscale.example.com"
 func NewFake() *Fake {
 	f := &Fake{state: demoState(), config: demoHeadscaleConfig,
 		serviceState: "active", serviceEnabled: "disabled", stats: demoStats(),
-		detected: true}
+		detected: true, pki: DemoLocalPKI()}
 	f.run = &runner.Fake{Prefix: "sudo -n", Hook: f.apply}
 	f.reloadControlPlane()
 	return f
@@ -154,10 +157,53 @@ func demoStats() map[string]FileStat {
 		{Path: "/etc/headscale/tls", User: "root", Group: "headscale", Mode: 0o750},
 		{Path: "/etc/headscale/tls/headscale.example.com.crt", User: "root", Group: "headscale", Mode: 0o644},
 		{Path: "/etc/headscale/tls/headscale.example.com.key", User: "root", Group: "headscale", Mode: 0o640},
+		// The pair tui-cert's local CA issued with owner headscale: S offers
+		// it by name before any file picker.
+		{Path: "/etc/tui-cert", User: "root", Group: "root", Mode: 0o755},
+		{Path: "/etc/tui-cert/issued", User: "root", Group: "root", Mode: 0o755},
+		{Path: demoIssuedDir, User: "root", Group: "root", Mode: 0o755},
+		{Path: demoIssuedDir + "/" + IssuedChainFile, User: "headscale", Group: "headscale", Mode: 0o644},
+		{Path: demoIssuedDir + "/" + IssuedKeyFile, User: "headscale", Group: "headscale", Mode: 0o600},
 	} {
 		stats[st.Path] = st
 	}
 	return stats
+}
+
+// demoIssuedDir is where the demo's local CA put the control plane's pair.
+const demoIssuedDir = "/etc/tui-cert/issued/headscale.example.com"
+
+// DemoLocalPKI is the demo's tui-cert: homelab-ca, not trusted yet, and the
+// pair it issued for the control plane, with a documentation-range IP SAN.
+func DemoLocalPKI() LocalPKI {
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	return LocalPKI{
+		Installed: true,
+		CAs: []LocalCA{{Name: "homelab-ca", CertPath: "/etc/tui-cert/ca/homelab-ca/ca.crt",
+			Subject:     "homelab-ca",
+			Fingerprint: "CC:70:FC:C3:4E:7F:A0:82:CB:5D:96:BD:60:86:65:A4:E7:4F:11:37:95:98:DE:F9:EC:62:00:99:99:9B:47:AE",
+			NotAfter:    now.AddDate(10, 0, 0), CanIssue: true}},
+		Pairs: []IssuedPair{{CA: "homelab-ca", Subject: "headscale.example.com",
+			SANs:     []string{"headscale.example.com", "192.0.2.10"},
+			CertPath: demoIssuedDir + "/" + IssuedChainFile,
+			KeyPath:  demoIssuedDir + "/" + IssuedKeyFile,
+			NotAfter: now.AddDate(1, 0, 0)}},
+	}
+}
+
+// SetLocalPKI replaces what the demo's tui-cert reports; a zero value is a
+// machine without tui-cert.
+func (f *Fake) SetLocalPKI(pki LocalPKI) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pki = pki
+}
+
+// ReadLocalPKI answers from the demo's tui-cert.
+func (f *Fake) ReadLocalPKI(_ context.Context) LocalPKI {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pki
 }
 
 // SetStat replaces one path's owner and mode in the demo's filesystem, so a

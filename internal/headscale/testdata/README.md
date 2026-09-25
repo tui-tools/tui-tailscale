@@ -17,6 +17,7 @@ came from:
 | `headscale-config-letsencrypt.yaml` | **Derived** from `headscale-config.yaml` by changing six lines: an https `server_url`, `listen_addr` on 443, `acme_email`, `tls_letsencrypt_hostname`, the `TLS-ALPN-01` challenge and a `base_domain` outside the host. The transport switch is judged on it: moving to plain http has to empty the hostname and touch nothing else. |
 | `headscale-config-own-cert.yaml` | **Constructed.** An own certificate installed for the service under `/etc/headscale/tls`. |
 | `headscale-config-postgres.yaml` | **Constructed.** A postgres database, so the only state file on this machine is the noise key. |
+| `tui-cert-check.json` | **Captured** from `tui-cert --demo --check` (tui-cert 0.3.0's in-memory demo, so every name is a documentation one), trimmed to the keys this tool reads plus the counts. One local CA, `homelab-ca`, and two pairs it issued, one with an IP SAN; the other rows are certificates no local CA signed. |
 
 Headscale is not installed on this machine, so the three list fixtures are
 constructed rather than captured. The first lab host with a real Headscale and

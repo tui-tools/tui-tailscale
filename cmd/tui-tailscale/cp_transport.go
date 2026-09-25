@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -218,7 +219,10 @@ func (a *app) tookListenAddr(value string) tea.Cmd {
 		a.pickerPurpose = pickerACMEChallenge
 		a.mode = modePicker
 	case headscale.TransportOwnCert:
-		a.askCertPath(cp.TLSCertPath, nil)
+		// The pairs tui-cert issued come first, by name; the file picker is
+		// the way to any other file.
+		a.setStatus(ui.StatusInfo, "reading the pairs tui-cert issued…")
+		return a.readLocalPKI(pkiForServer)
 	default:
 		a.askBaseDomain(cp.BaseDomain, nil)
 	}
@@ -254,16 +258,17 @@ func (a *app) tookACMEEmail(value string) tea.Cmd {
 	return nil
 }
 
-// askCertPath opens the certificate step.
+// askCertPath opens the certificate step: the file picker, in the
+// certificate's directory when there is one.
 func (a *app) askCertPath(value string, problem error) {
-	// FilePicker: tui-kit #23
-	a.openRetry(inputTLSCertPath, "Own certificate — tls_cert_path",
-		"/etc/headscale/tls/vpn.example.com.crt", value,
-		"The certificate (full chain) headscale serves. It has to be readable by "+
-			serviceAccount(a.hsState.ControlPlane)+", the account headscale runs "+
-			"as, and outside /home and /tmp, which the packaged unit cannot see. tui-cert "+
-			"issues one, and its install step copies the pair wherever headscale needs it.",
-		problem)
+	help := "The certificate (full chain) headscale serves. It has to be readable by " +
+		serviceAccount(a.hsState.ControlPlane) + ", the account headscale runs as, and " +
+		"outside /home and /tmp, which the packaged unit cannot see."
+	if hint := a.pkiHint(true); hint != "" {
+		help += "\n\n" + hint
+	}
+	a.openFilePicker(inputTLSCertPath, "Own certificate — tls_cert_path", help,
+		pickerStart(value, "/etc/headscale"), certExtensions, problem)
 }
 
 // tookCertPath records the certificate and asks for the key.
@@ -274,8 +279,8 @@ func (a *app) tookCertPath(value string) tea.Cmd {
 	}
 	a.cpDraft.certPath = value
 	key := a.hsState.ControlPlane.TLSKeyPath
-	if key == "" && strings.HasSuffix(value, ".crt") {
-		key = strings.TrimSuffix(value, ".crt") + ".key"
+	if key == "" || path.Dir(key) != path.Dir(value) {
+		key = keyBeside(value)
 	}
 	a.askKeyPath(key, nil)
 	return nil
@@ -283,13 +288,11 @@ func (a *app) tookCertPath(value string) tea.Cmd {
 
 // askKeyPath opens the key step.
 func (a *app) askKeyPath(value string, problem error) {
-	// FilePicker: tui-kit #23
-	a.openRetry(inputTLSKeyPath, "Own certificate — tls_key_path",
-		"/etc/headscale/tls/vpn.example.com.key", value,
+	a.openFilePicker(inputTLSKeyPath, "Own certificate — tls_key_path",
 		"The certificate's private key. Only its path is written to config.yaml; the "+
 			"key itself is never read by this tool. It has to be readable by "+
 			serviceAccount(a.hsState.ControlPlane)+".",
-		problem)
+		value, keyExtensions, problem)
 }
 
 // tookKeyPath records the key, then checks both files from this machine.
@@ -299,7 +302,14 @@ func (a *app) tookKeyPath(value string) tea.Cmd {
 		return nil
 	}
 	a.cpDraft.keyPath = value
-	cert, key := a.cpDraft.certPath, value
+	return a.checkTLSFiles()
+}
+
+// checkTLSFiles reads, from this machine, whether the service account can
+// read the draft's certificate and key: a picked file and a pair tui-cert
+// issued are checked the same way.
+func (a *app) checkTLSFiles() tea.Cmd {
+	cert, key := a.cpDraft.certPath, a.cpDraft.keyPath
 	cp := a.hsState.ControlPlane
 	user, group := cp.ServiceUser, cp.ServiceGroup
 	if user == "" {
@@ -325,7 +335,8 @@ func (a *app) tookKeyPath(value string) tea.Cmd {
 func (a *app) tookTLSCheck(msg tlsCheckedMsg) tea.Cmd {
 	if msg.problem != "" {
 		a.askCertPath(a.cpDraft.certPath, fmt.Errorf("%s — give the files to the service "+
-			"account, or install a copy it can read (tui-cert's install step does)", msg.problem))
+			"account (tui-cert's e issues a pair with owner headscale), or pick a copy it "+
+			"can read", msg.problem))
 		return nil
 	}
 	a.askBaseDomain(a.hsState.ControlPlane.BaseDomain, nil)
