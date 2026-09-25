@@ -92,7 +92,7 @@ func (r *Real) readFirewall(ctx context.Context) Firewall {
 	}{
 		{FirewallTool, []string{FirewallTool, "--check"}, ParseTuiFirewallCheck},
 		{"nft", []string{"nft", "-j", "list", "ruleset"}, ParseNftRuleset},
-		{"iptables", []string{"iptables", "-S", "INPUT"}, ParseIptablesInput},
+		{"iptables", []string{"iptables", "-S"}, ParseIptablesInput},
 	}
 	var lastErr string
 	for _, read := range reads {

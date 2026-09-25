@@ -41,7 +41,7 @@ var searchPaths = map[string][]string{
 	"journalctl": {"/usr/bin/journalctl", "/bin/journalctl"},
 	// The readiness ports step reads the host firewall, never changes it:
 	// tui-firewall's --check when the family's firewall tool is here, the
-	// nftables rule set or the iptables INPUT chain otherwise. tui-firewall is
+	// nftables rule set or the iptables filter table otherwise. tui-firewall is
 	// also what f hands the terminal to.
 	"tui-firewall": {"/usr/bin/tui-firewall", "/usr/local/bin/tui-firewall"},
 	"nft":          {"/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft"},

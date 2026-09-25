@@ -15,10 +15,17 @@ import (
 // It is read, never changed: tui-firewall is the family's tool for opening a
 // port, and `f` hands the terminal to it. The read prefers tui-firewall's own
 // --check, which already understands ufw, firewalld and nftables; without it,
-// the input chain is read from `nft -j list ruleset` or `iptables -S INPUT`.
-// Every source is reduced to the same few facts per rule, and a rule this
-// reader cannot judge (a jump to another chain, a match on something it does
-// not model) never decides the answer by itself.
+// the rule set is read from `nft -j list ruleset` or `iptables -S`. Every
+// source is reduced to the same few facts per rule, and a rule this reader
+// cannot judge (a match on something it does not model) never decides the
+// answer by itself.
+//
+// A jump or a goto is followed into the chain it names (issue #24): ufw on
+// iptables-nft, the default firewall of an Ubuntu server, is an input chain
+// with a drop policy whose rules are nothing but jumps, and the accept for a
+// port sits two chains down. When a jump cannot be followed (its chain is not
+// in what was read, or the chains nest deeper than the kernel allows), the
+// answer is unknown: the policy after it cannot be trusted either.
 
 // NodePort is the UDP port tailscaled listens on for direct connections.
 const NodePort = 41641
@@ -47,9 +54,17 @@ const (
 // fwRule is one input rule, reduced to what decides a port: its verdict, the
 // protocol and ports it matches, and whether it matches anything else.
 type fwRule struct {
-	// verdict is accept, reject (reject or drop), or skip for anything that
-	// ends somewhere this reader does not follow (a jump, a return, a log).
+	// verdict is accept, reject (reject or drop), jump or goto (to target),
+	// return, or skip for anything that does not end the walk (a log, a
+	// counter, a mark).
 	verdict string
+	// target is the chain a jump or a goto continues in.
+	target string
+	// addrtype marks iptables-nft's address-type match, whose type the JSON
+	// does not carry. On the input path it is ufw's "not local" guard, whose
+	// first rule returns for a packet addressed to this host: a return under
+	// it is taken, anything else under it says nothing about clients.
+	addrtype bool
 	// proto is tcp, udp, or empty for any.
 	proto string
 	// ports are the destination port ranges, none for any.
@@ -63,12 +78,20 @@ type fwRule struct {
 	xtState bool
 }
 
-// fwChain is one input chain: its rules in order and its policy.
+// fwChain is one chain: its rules in order and, for an input base chain, its
+// policy.
 type fwChain struct {
 	rules []fwRule
 	// policy is accept, reject, or empty when unknown.
 	policy string
+	// table names the table the chain belongs to, which is where its jumps
+	// are looked up.
+	table string
 }
+
+// maxJumpDepth is how deep chains may nest: the kernel's own limit for
+// nftables, well past anything ufw or firewalld builds.
+const maxJumpDepth = 16
 
 // Firewall is what the read found: where from, and the IPv4 input chains.
 type Firewall struct {
@@ -79,8 +102,14 @@ type Firewall struct {
 	Error string `json:"error,omitempty"`
 	// Launchable reports that tui-firewall is installed, so f can hand over.
 	Launchable bool `json:"-"`
-	chains     []fwChain
+	// chains are the input base chains, where a packet starts; named are
+	// every other chain a jump can reach, by table and name.
+	chains []fwChain
+	named  map[string]fwChain
 }
+
+// chainName keys a regular chain by its table and name.
+func chainName(table, name string) string { return table + "\x00" + name }
 
 // Check judges one port: closed when any input chain would refuse a new
 // connection, open when every chain accepts it, unknown otherwise.
@@ -90,7 +119,7 @@ func (f Firewall) Check(proto string, port int) PortState {
 	}
 	state := PortOpen
 	for _, chain := range f.chains {
-		switch chain.check(proto, port) {
+		switch f.check(chain, proto, port) {
 		case PortClosed:
 			return PortClosed
 		case PortUnknown:
@@ -100,23 +129,11 @@ func (f Firewall) Check(proto string, port int) PortState {
 	return state
 }
 
-// check walks one chain the way the kernel would for a new connection from
-// anywhere, skipping what it cannot judge.
-func (c fwChain) check(proto string, port int) PortState {
-	for _, r := range c.rules {
-		if r.verdict == "skip" || r.narrow {
-			continue
-		}
-		if r.proto != "" && r.proto != proto {
-			continue
-		}
-		if len(r.ports) > 0 && !inRanges(r.ports, port) {
-			continue
-		}
-		if r.verdict == "accept" {
-			return PortOpen
-		}
-		return PortClosed
+// check walks one base chain the way the kernel would for a new connection
+// from anywhere, and falls back on its policy when no rule decided.
+func (f Firewall) check(c fwChain, proto string, port int) PortState {
+	if state, decided := f.walk(c, proto, port, 0); decided {
+		return state
 	}
 	switch c.policy {
 	case "accept":
@@ -125,6 +142,55 @@ func (c fwChain) check(proto string, port int) PortState {
 		return PortClosed
 	}
 	return PortUnknown
+}
+
+// walk goes through one chain's rules, into the chains they jump to, and
+// reports the verdict when one was reached; not decided means the packet
+// fell off the end of the chain (or returned) to whoever called it.
+func (f Firewall) walk(c fwChain, proto string, port, depth int) (PortState, bool) {
+	for _, r := range c.rules {
+		if !r.applies(proto, port) {
+			continue
+		}
+		switch r.verdict {
+		case "accept":
+			return PortOpen, true
+		case "reject":
+			return PortClosed, true
+		case "return":
+			return "", false
+		case "jump", "goto":
+			target, ok := f.named[chainName(c.table, r.target)]
+			if !ok || depth >= maxJumpDepth {
+				// A jump that cannot be followed may end anywhere.
+				return PortUnknown, true
+			}
+			if state, decided := f.walk(target, proto, port, depth+1); decided {
+				return state, true
+			}
+			if r.verdict == "goto" {
+				// A goto does not come back: its chain's end is this one's.
+				return "", false
+			}
+		}
+	}
+	return "", false
+}
+
+// applies reports whether a rule takes a new connection from anywhere to
+// this host on the port: it ends somewhere, and matches nothing narrower
+// than the protocol and the port.
+func (r fwRule) applies(proto string, port int) bool {
+	if r.verdict == "skip" || r.narrow {
+		return false
+	}
+	if r.addrtype && r.verdict != "return" {
+		return false
+	}
+	if r.proto != "" && r.proto != proto {
+		return false
+	}
+	return len(r.ports) == 0 || inRanges(r.ports, port)
 }
 
 // inRanges reports whether a port is in one of the ranges.
@@ -286,35 +352,71 @@ func servicePorts(service string) ([][2]int, bool) {
 	return nil, true
 }
 
-// --- iptables -S INPUT --------------------------------------------------------
+// --- iptables -S ---------------------------------------------------------------
 
-// ParseIptablesInput reads `iptables -S INPUT`.
+// iptablesTable is the one table `iptables -S` lists: filter.
+const iptablesTable = "filter"
+
+// ParseIptablesInput reads `iptables -S`: the INPUT chain, and every chain
+// its jumps reach. Output limited to `iptables -S INPUT` still reads; a jump
+// there names a chain that is not in it, which makes the answer unknown.
 func ParseIptablesInput(out string) (Firewall, bool) {
-	chain := fwChain{}
+	lines := strings.Split(out, "\n")
+	// Chains are declared with -N, before or after the rules that jump to
+	// them; the built-in ones are always there.
+	chains := map[string]*fwChain{}
+	for _, name := range []string{"INPUT", "FORWARD", "OUTPUT"} {
+		chains[name] = &fwChain{table: iptablesTable}
+	}
+	for _, line := range lines {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "-N" {
+			chains[f[1]] = &fwChain{table: iptablesTable}
+		}
+	}
 	seen := false
-	for _, line := range strings.Split(out, "\n") {
+	for _, line := range lines {
 		f := strings.Fields(line)
-		if len(f) < 2 || f[1] != "INPUT" {
+		if len(f) < 2 {
+			continue
+		}
+		c, ok := chains[f[1]]
+		if !ok {
 			continue
 		}
 		switch f[0] {
 		case "-P":
-			seen = true
+			seen = seen || f[1] == "INPUT"
 			if len(f) >= 3 {
-				chain.policy = policyWord(f[2])
+				c.policy = policyWord(f[2])
 			}
 		case "-A":
-			seen = true
-			chain.rules = append(chain.rules, iptablesRule(f[2:]))
+			seen = seen || f[1] == "INPUT"
+			c.rules = append(c.rules, iptablesRule(f[2:]))
 		}
 	}
 	if !seen {
 		return Firewall{}, false
 	}
-	return Firewall{Source: SourceIptables, chains: []fwChain{chain}}, true
+	fw := Firewall{Source: SourceIptables, chains: []fwChain{*chains["INPUT"]},
+		named: map[string]fwChain{}}
+	for name, c := range chains {
+		if name != "INPUT" {
+			fw.named[chainName(iptablesTable, name)] = *c
+		}
+	}
+	return fw, true
 }
 
-// iptablesRule reduces one `-A INPUT …` rule.
+// nonTerminal are the iptables targets that let the packet go on to the next
+// rule: a log, a mark, a counter of some kind.
+var nonTerminal = map[string]bool{
+	"LOG": true, "NFLOG": true, "ULOG": true, "MARK": true, "CONNMARK": true,
+	"TRACE": true, "AUDIT": true, "CT": true, "NOTRACK": true, "TCPMSS": true,
+	"SET": true, "CLASSIFY": true, "DSCP": true, "TOS": true, "TTL": true,
+	"HL": true, "SECMARK": true, "CONNSECMARK": true, "IDLETIMER": true, "LED": true,
+}
+
+// iptablesRule reduces one `-A <chain> …` rule.
 func iptablesRule(args []string) fwRule {
 	r := fwRule{verdict: "skip"}
 	for i := 0; i < len(args); i++ {
@@ -332,8 +434,15 @@ func iptablesRule(args []string) fwRule {
 		case "--dport", "--dports", "--destination-port":
 			r.ports = parsePorts(next)
 			i++
-		case "-s", "--source", "-i", "--in-interface", "--src-range":
+		case "-s", "--source", "-i", "--in-interface", "--src-range", "--src-type":
 			if next != "0.0.0.0/0" {
+				r.narrow = true
+			}
+			i++
+		case "--dst-type":
+			// A packet a client sends to this host is addressed to one of
+			// its own addresses: LOCAL matches it, any other type does not.
+			if !strings.EqualFold(next, "LOCAL") {
 				r.narrow = true
 			}
 			i++
@@ -343,12 +452,20 @@ func iptablesRule(args []string) fwRule {
 			}
 			i++
 		case "-j", "--jump":
-			switch strings.ToUpper(next) {
-			case "ACCEPT":
+			switch target := strings.ToUpper(next); {
+			case target == "ACCEPT":
 				r.verdict = "accept"
-			case "DROP", "REJECT":
+			case target == "DROP" || target == "REJECT":
 				r.verdict = "reject"
+			case target == "RETURN":
+				r.verdict = "return"
+			case nonTerminal[target]:
+			default:
+				r.verdict, r.target = "jump", next
 			}
+			i++
+		case "-g", "--goto":
+			r.verdict, r.target = "goto", next
 			i++
 		case "!":
 			// A negated match is beyond this reader.
@@ -361,7 +478,8 @@ func iptablesRule(args []string) fwRule {
 // --- nft -j list ruleset --------------------------------------------------------
 
 // ParseNftRuleset reads `nft -j list ruleset`: every IPv4-capable base chain
-// hooked to input, its policy and its rules.
+// hooked to input, its policy and its rules, and every other chain of those
+// families, for the jumps to follow.
 func ParseNftRuleset(out string) (Firewall, bool) {
 	start := strings.IndexByte(out, '{')
 	if start < 0 {
@@ -382,15 +500,20 @@ func ParseNftRuleset(out string) (Firewall, bool) {
 			continue
 		}
 		var c struct {
-			Family, Table, Name, Hook, Policy string
+			Family, Table, Name, Hook, Type, Policy string
 		}
-		if json.Unmarshal(raw, &c) != nil || c.Hook != "input" ||
-			(c.Family != "ip" && c.Family != "inet") {
+		if json.Unmarshal(raw, &c) != nil || (c.Family != "ip" && c.Family != "inet") {
 			continue
 		}
 		k := chainKey{c.Family, c.Table, c.Name}
-		chains[k] = &fwChain{policy: policyWord(c.Policy)}
-		order = append(order, k)
+		switch {
+		case c.Hook == "input" && (c.Type == "" || c.Type == "filter"):
+			chains[k] = &fwChain{policy: policyWord(c.Policy), table: c.Family + " " + c.Table}
+			order = append(order, k)
+		case c.Hook == "":
+			// A regular chain: reached only by a jump or a goto.
+			chains[k] = &fwChain{table: c.Family + " " + c.Table}
+		}
 	}
 	for _, obj := range doc.Nftables {
 		raw, ok := obj["rule"]
@@ -414,9 +537,16 @@ func ParseNftRuleset(out string) (Firewall, bool) {
 		// No input base chain at all: nothing filters input.
 		return Firewall{Source: SourceNftables, chains: []fwChain{{policy: "accept"}}}, true
 	}
-	fw := Firewall{Source: SourceNftables}
+	fw := Firewall{Source: SourceNftables, named: map[string]fwChain{}}
+	base := map[chainKey]bool{}
 	for _, k := range order {
 		fw.chains = append(fw.chains, *chains[k])
+		base[k] = true
+	}
+	for k, c := range chains {
+		if !base[k] {
+			fw.named[chainName(c.table, k.name)] = *c
+		}
 	}
 	return fw, true
 }
@@ -431,6 +561,15 @@ func nftRule(exprs []map[string]json.RawMessage) fwRule {
 				r.verdict = "accept"
 			case "drop", "reject":
 				r.verdict = "reject"
+			case "return":
+				r.verdict = "return"
+			case "jump", "goto":
+				var to struct{ Target string }
+				if json.Unmarshal(body, &to) != nil || to.Target == "" {
+					r.narrow = true
+					continue
+				}
+				r.verdict, r.target = kind, to.Target
 			case "xt":
 				var xt struct{ Type, Name string }
 				_ = json.Unmarshal(body, &xt)
@@ -442,6 +581,8 @@ func nftRule(exprs []map[string]json.RawMessage) fwRule {
 					// JSON. With a port it is the NEW-connections rule of a
 					// port; without one it is the established catch-all.
 					r.xtState = true
+				case xt.Type == "match" && xt.Name == "addrtype":
+					r.addrtype = true
 				case xt.Type == "match" && (xt.Name == "tcp" || xt.Name == "udp" ||
 					xt.Name == "multiport"):
 				default:
@@ -473,6 +614,10 @@ func nftMatch(body json.RawMessage, r *fwRule) {
 		Payload *struct{ Protocol, Field string } `json:"payload"`
 		Meta    *struct{ Key string }             `json:"meta"`
 		Ct      *struct{ Key string }             `json:"ct"`
+		Fib     *struct {
+			Result string   `json:"result"`
+			Flags  []string `json:"flags"`
+		} `json:"fib"`
 	}
 	_ = json.Unmarshal(m.Left, &left)
 	negated := m.Op == "!="
@@ -494,6 +639,10 @@ func nftMatch(body json.RawMessage, r *fwRule) {
 		} else {
 			r.narrow = true
 		}
+	case left.Fib != nil && left.Fib.Result == "type" && hasArg(left.Fib.Flags, "daddr") &&
+		!negated && strings.Contains(string(m.Right), `"local"`):
+		// fib daddr type local: a packet to this host's own address, which
+		// is what a client's is.
 	case left.Ct != nil && left.Ct.Key == "state":
 		if !strings.Contains(string(m.Right), "new") || negated {
 			r.narrow = true
