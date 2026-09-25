@@ -196,11 +196,13 @@ A control plane comes up in an order, and each step only makes sense once the on
 | server | `server_url` is set, valid and not loopback, and `dns.base_domain` is one headscale will start with | `S` sets the transport, `server_url` and `base_domain` |
 | unit | the unit is running, and enabled at boot | how to start it, or that `S` and `O` end with the enable |
 | ports | the host firewall lets new connections reach the control port: the port in `listen_addr` when headscale binds a public address (a NAT or port forward in front of the host can give clients another one in `server_url`), the `server_url` port behind a reverse proxy | `443/tcp is closed in the host firewall` — `f` opens tui-firewall |
-| identity | OIDC is configured, or a pre-auth key can still register a machine | `O` sets up an identity provider, or `n` on the keys screen creates a key |
+| identity | OIDC is configured, or a pre-auth key can still register a machine (only until the first node is there) | `O` sets up an identity provider, or `n` on the keys screen creates a key |
 | first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine; when a node is already waiting for its login, `R` on the nodes screen registers it |
 | routes | no advertised route waits for approval | `routes pending approval (N)` — `r` on the nodes screen |
 
 The ports step reads the host firewall, and never changes it: `tui-firewall --check` when the family's firewall tool is installed (it already understands ufw, firewalld and nftables), otherwise `nft -j list ruleset` or `iptables -S INPUT`, all escalated. A rule this reader cannot judge (a jump to another chain, a match on an interface or a source) never decides the answer, and a firewall it cannot read is reported as unknown rather than open or closed. A closed `41641/udp` is not a missing step, since peers then relay through DERP, but the ready line says so. `f`, on any control-plane screen, hands the terminal to tui-firewall the way the tui-tools launcher starts a family tool, with no argument; the screen comes back, and re-reads, when it exits. `--check` reports the answer as `readiness.ports`: the source, the two ports and what the firewall does to each (`open`, `closed` or `unknown`).
+
+Once a node is registered, a way in for the next machine is no longer a missing step. The usual private tailnet joins its first node with a single-use key, which that join spends; the line then reads ready, followed by a muted hint: `to add another machine: n on the keys screen (the last key was single-use and is spent), or O for browser login`. `--check` answers the same as `readiness.canJoinMore` (false here) with `canJoinMoreReason` (`spent`, `expired` or `none`) and the `hint`.
 
 The hint bar at the bottom says the same: on the screen where the next step is done, its key comes first, marked `◂ next` (`S` on the users screen while the server is not set up, `j` on the node screen while there is no node, `r` on the nodes screen while routes wait).
 
@@ -221,7 +223,7 @@ The package ships the binary, a hardened unit and an example `/etc/headscale/con
 
 ### Pre-auth keys (`n` on the preauth keys screen)
 
-Pick the owning user by id and optionally add the words `reusable`, `ephemeral` and an expiration like `30m`, `24h` or `7d` (default `24h`). The previewed command is `headscale preauthkeys create --user <id> [--reusable] [--ephemeral] --expiration <dur>`. Headscale prints the key once; tui-tailscale shows it once in the status line with a "shown once — copy it now" note and never stores it. The list keeps showing prefixes only, like headscale's own CLI.
+Pick the owning user by id and optionally add the words `reusable`, `ephemeral` and an expiration like `30m`, `24h` or `7d` (default `24h`). The previewed command is `headscale preauthkeys create --user <id> [--reusable] [--ephemeral] --expiration <dur>`. Headscale prints the key once; tui-tailscale shows it once in the status line with a "shown once — copy it now" note and never stores it. The list keeps showing prefixes only, like headscale's own CLI. A key without `reusable` is spent by its first join: the list marks it `spent` in the USED column and dims it, and the line above the list says that `n` with `reusable` makes a key that joins several machines.
 
 ### Server settings (`S` on the users screen)
 

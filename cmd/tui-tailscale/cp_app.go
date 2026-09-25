@@ -135,6 +135,8 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 				"user-id [reusable] [ephemeral] [expiration]", a.hsState.Users[0].ID,
 				"The owner's user id (see the users tab), then optional words: "+
 					"reusable, ephemeral, and an expiration like 30m, 24h or 7d (default 24h). "+
+					"Without reusable the key is spent by its first join: add it to join "+
+					"several machines with one key. "+
 					"The key is shown once after creation and never stored.")
 			return nil
 		}

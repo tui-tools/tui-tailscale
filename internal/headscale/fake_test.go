@@ -423,3 +423,54 @@ func TestInstallOnOmarchyNeverUpgrades(t *testing.T) {
 		t.Errorf("the body does not say how Omarchy upgrades: %q", plan.Body)
 	}
 }
+
+// Issue #19: a private tailnet whose first node joined with a single-use key.
+// The key is spent and there is no identity provider, and nothing is broken:
+// readiness is ready, with how to add the next machine as a hint.
+func TestReadinessWithASpentKeyAfterTheFirstNode(t *testing.T) {
+	now := time.Now()
+	f := NewFake()
+	f.SetService("active", "enabled")
+	state, _ := f.Load(t.Context())
+	state.ControlPlane.OIDC = OIDCConfig{}
+	state.OIDCInferred = false
+	state.Nodes = []Node{{ID: "1", Name: "gateway", User: "ops", Online: true}}
+	state.PreAuthKeys = []PreAuthKey{{ID: "1", User: "ops", Used: true,
+		Expiration: now.Add(time.Hour)}}
+
+	r := ReadinessFor(state, now)
+	if r.Next != NextReady || r.PreAuthKey || !r.FirstNode {
+		t.Errorf("readiness = %+v, want ready", r)
+	}
+	if r.CanJoinMore || r.CanJoinMoreReason != JoinMoreSpent {
+		t.Errorf("canJoinMore = %v (%q), want false (spent)", r.CanJoinMore, r.CanJoinMoreReason)
+	}
+	if !strings.Contains(r.Hint, "n on the keys screen (the last key was single-use and is "+
+		"spent), or O for browser login") {
+		t.Errorf("hint = %q", r.Hint)
+	}
+
+	// Before any node, the same spent key still blocks: nothing can join.
+	state.Nodes = nil
+	if r := ReadinessFor(state, now); r.Next != NextIdentity || r.Hint != "" {
+		t.Errorf("no node yet = %+v", r)
+	}
+
+	// Expired keys and no keys at all are their own reasons.
+	state.Nodes = []Node{{ID: "1"}}
+	state.PreAuthKeys = []PreAuthKey{{Reusable: true, Expiration: now.Add(-time.Hour)}}
+	if r := ReadinessFor(state, now); r.CanJoinMoreReason != JoinMoreExpired ||
+		!strings.Contains(r.Hint, "(the last key expired)") {
+		t.Errorf("expired = %+v", r)
+	}
+	state.PreAuthKeys = nil
+	if r := ReadinessFor(state, now); r.CanJoinMoreReason != JoinMoreNone || r.Next != NextReady {
+		t.Errorf("no key = %+v", r)
+	}
+
+	// A usable key or an identity provider means another machine can join.
+	state.PreAuthKeys = []PreAuthKey{{Reusable: true, Used: true}}
+	if r := ReadinessFor(state, now); !r.CanJoinMore || r.CanJoinMoreReason != "" || r.Hint != "" {
+		t.Errorf("reusable key = %+v", r)
+	}
+}

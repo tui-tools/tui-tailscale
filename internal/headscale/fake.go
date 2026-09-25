@@ -523,6 +523,14 @@ func (d *demoProcess) String() string { return d.name }
 // `tailscale up --login-server` and has not logged in yet.
 const DemoAuthID = "hskey-authreq-DemoLaptopWaiting0001"
 
+// SetPreAuthKeys replaces the pre-auth keys, so a test can stage a spent or
+// expired one.
+func (f *Fake) SetPreAuthKeys(keys []PreAuthKey) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.PreAuthKeys = append([]PreAuthKey(nil), keys...)
+}
+
 // SetRegistrations replaces the pending registrations, so a test can stage
 // the ones it wants.
 func (f *Fake) SetRegistrations(regs []Registration) {
@@ -747,6 +755,12 @@ func demoState() State {
 				Expiration: now.Add(24 * time.Hour),
 				CreatedAt:  now.Add(-2 * time.Hour),
 				ACLTags:    []string{"tag:router"}},
+			// The single-use key exit-gateway joined with: spent, so the
+			// keys screen marks it (issue #19).
+			{ID: "2", User: "user@example.com", KeyPrefix: "abcdef0123", Reusable: false,
+				Ephemeral: false, Used: true,
+				Expiration: now.Add(20 * time.Hour),
+				CreatedAt:  now.Add(-4 * time.Hour)},
 		},
 	}
 }

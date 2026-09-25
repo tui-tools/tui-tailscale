@@ -115,6 +115,10 @@ func (a *app) noteLines() []string {
 		return append(lines, a.theme.Muted.Render(ui.Truncate("dns: section of "+
 			headscale.HeadscaleConfigPath+" · every change is a diff of that file, then a "+
 			"restart", a.width)))
+	case screenKeys:
+		if hasSpentKey(a.hsState.PreAuthKeys) {
+			lines = append(lines, a.theme.Muted.Render(ui.Truncate(spentKeyNote, a.width)))
+		}
 	case screenUsers:
 		for _, line := range a.controlPlanePanel() {
 			lines = append(lines, a.theme.Muted.Render(ui.Truncate(line, a.width)))
@@ -138,7 +142,12 @@ func (a *app) readinessLine() string {
 	if r.Next == headscale.NextReady {
 		style, label = a.theme.OK, "readiness  "
 	}
-	return ui.Truncate(a.theme.Muted.Render(label)+style.Render(r.NextStep), a.width)
+	line := a.theme.Muted.Render(label) + style.Render(r.NextStep)
+	if r.Hint != "" {
+		// Not a missing step: a suggestion, after the step and muted.
+		line += a.theme.Muted.Render(" · " + r.Hint)
+	}
+	return ui.Truncate(line, a.width)
 }
 
 // controlPlanePanel renders what /etc/headscale/config.yaml says. It is plain
@@ -341,13 +350,44 @@ func (a *app) keysTable() ([]ui.Column, [][]string, []*lipgloss.Style) {
 	keys := a.hsState.PreAuthKeys
 	now := time.Now()
 	rows := make([][]string, 0, len(keys))
+	styles := make([]*lipgloss.Style, 0, len(keys))
 	for _, k := range keys {
 		rows = append(rows, []string{
 			k.ID, orDash(k.User), orDash(k.KeyPrefix),
-			yesNo(k.Reusable), yesNo(k.Used), expiryText(now, k.Expiration),
+			yesNo(k.Reusable), usedText(k), expiryText(now, k.Expiration),
 		})
+		// A key that can no longer register anything reads muted.
+		var style *lipgloss.Style
+		if !k.Usable(now) {
+			s := a.theme.Row.Foreground(a.theme.Muted.GetForeground())
+			style = &s
+		}
+		styles = append(styles, style)
 	}
-	return columns, rows, nil
+	return columns, rows, styles
+}
+
+// usedText is a key's USED cell: a single-use key that registered its machine
+// is "spent", since it can never be used again; a reusable one is only "yes".
+func usedText(k headscale.PreAuthKey) string {
+	if k.Spent() {
+		return "spent"
+	}
+	return yesNo(k.Used)
+}
+
+// spentKeyNote is the keys screen's line when a single-use key is spent.
+const spentKeyNote = "a single-use key is spent by its first join · to join several " +
+	"machines with one key, n creates a reusable one"
+
+// hasSpentKey reports whether any pre-auth key is single-use and spent.
+func hasSpentKey(keys []headscale.PreAuthKey) bool {
+	for _, k := range keys {
+		if k.Spent() {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeStyle colours a node row: online reads OK, expired reads danger.

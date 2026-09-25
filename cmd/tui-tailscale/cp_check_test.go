@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/pkgmgr"
 	"github.com/tui-tools/tui-tailscale/internal/headscale"
@@ -35,7 +37,7 @@ func TestRunCheckPrintsTheControlPlane(t *testing.T) {
 	})
 	hs := report.Headscale
 	if !hs.Present || hs.Users != 2 || hs.Nodes != 3 || hs.NodesOnline != 3 ||
-		hs.NodesExpired != 0 || hs.PreAuthKeys != 1 {
+		hs.NodesExpired != 0 || hs.PreAuthKeys != 2 {
 		t.Errorf("headscale summary is wrong: %+v", hs)
 	}
 	if !hs.OIDCConfigured {
@@ -177,4 +179,38 @@ type noHeadscale struct{ *headscale.Fake }
 func (noHeadscale) Load(context.Context) (headscale.State, error) {
 	return headscale.State{Distro: pkgmgr.ParseOSRelease(
 		"ID=ubuntu\nID_LIKE=debian\nVERSION_ID=24.04\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n")}, nil
+}
+
+// Issue #19 in --check: the first node joined with a single-use key, which is
+// spent, and there is no identity provider. Identity is not the next step;
+// canJoinMore says no other machine can join now, and why.
+func TestRunCheckSpentKeyIsNotBlocking(t *testing.T) {
+	hs := headscale.NewFake()
+	hs.SetService("active", "enabled")
+	hs.SetConfig("server_url: https://headscale.example.com\nlisten_addr: 127.0.0.1:8080\n" +
+		"dns:\n  magic_dns: true\n  base_domain: tailnet.example.com\n")
+	hs.SetPreAuthKeys([]headscale.PreAuthKey{{ID: "1", User: "ops@example.com",
+		KeyPrefix: "0123456789", Used: true, Expiration: time.Now().Add(time.Hour)}})
+	report, out := checkOf(t, hs, nil)
+	r := report.Headscale.Readiness
+	if r.Next == headscale.NextIdentity || r.CanJoinMore ||
+		r.CanJoinMoreReason != headscale.JoinMoreSpent || r.Hint == "" {
+		t.Errorf("readiness = %+v", r)
+	}
+	for _, want := range []string{`"canJoinMore": false`, `"canJoinMoreReason": "spent"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--check lacks %s", want)
+		}
+	}
+}
+
+// The keys screen marks a spent single-use key and says how to join several
+// machines with one.
+func TestKeysScreenMarksASpentKey(t *testing.T) {
+	a, _ := newTestApp(t)
+	press(t, a, "5")
+	view := ansi.Strip(a.View())
+	if !strings.Contains(view, "spent") || !strings.Contains(view, "n creates a reusable one") {
+		t.Errorf("the keys screen does not mark the spent key:\n%s", view)
+	}
 }
