@@ -2,11 +2,10 @@ package headscale
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"strings"
+	"time"
 
 	"github.com/tui-tools/tui-kit/runner"
 )
@@ -30,17 +29,51 @@ type Process interface {
 const FirewallTool = "tui-firewall"
 
 // LaunchFirewall prepares the hand-over to tui-firewall: the binary found at
-// one of its known paths, with no argument at all. It is not previewed as a
+// one of its known paths, with the ports to open when there are any and it
+// takes them (issue #32), with no argument otherwise. It is not previewed as a
 // change, because it is not one: tui-firewall previews and confirms whatever
-// it changes.
-func (r *Real) LaunchFirewall() (Process, error) {
+// it changes, --open included.
+func (r *Real) LaunchFirewall(h FirewallHandoff) (FirewallLaunch, error) {
 	for _, path := range searchPaths[FirewallTool] {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-			// G204: a fixed, absolute path from the table, no argument.
-			return &process{cmd: exec.Command(path)}, nil //nolint:gosec // fixed path, no arguments
+		if info, err := os.Stat(path); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
 		}
+		args, err := h.Args()
+		if err != nil {
+			return FirewallLaunch{}, err
+		}
+		launch := FirewallLaunch{}
+		if len(args) > 0 {
+			version := firewallVersion(path)
+			if FirewallTakesOpen(version) {
+				launch.Prefilled = true
+			} else {
+				args = nil
+				launch.Hint = fallbackHint(h, version)
+			}
+		}
+		// G204: a fixed, absolute path from the table; the arguments are
+		// validated ports and a comment (FirewallHandoff.Args), no shell.
+		launch.Process = &process{cmd: exec.Command(path, args...)} //nolint:gosec // fixed path, validated arguments
+		return launch, nil
 	}
-	return nil, fmt.Errorf("%s is not installed (it comes from pkgs.tui.tools)", FirewallTool)
+	return FirewallLaunch{}, ErrFirewallMissing
+}
+
+// firewallVersionTimeout bounds `tui-firewall --version`, which prints a
+// constant and exits.
+const firewallVersionTimeout = 3 * time.Second
+
+// firewallVersion asks the tui-firewall at path for its version, "" when it
+// does not say. It needs no privilege and reads nothing.
+func firewallVersion(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), firewallVersionTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output() //nolint:gosec // fixed path, fixed argument
+	if err != nil {
+		return ""
+	}
+	return ParseFirewallVersion(string(out))
 }
 
 // process adapts an exec.Cmd to Process.
@@ -70,8 +103,11 @@ func (p *process) SetStderr(w io.Writer) {
 	}
 }
 
-// String is the command line.
-func (p *process) String() string { return strings.Join(p.cmd.Args, " ") }
+// String is the command line, quoted the way the runner's previews are, so a
+// comment with spaces reads as the one argument it is.
+func (p *process) String() string {
+	return runner.Command{Argv: p.cmd.Args}.String()
+}
 
 // readFirewall reads the host firewall's input chain for the readiness ports
 // step: tui-firewall's own --check when it is installed, then nftables, then

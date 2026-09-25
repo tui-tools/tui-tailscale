@@ -592,3 +592,44 @@ func TestWriteShownOnceKey(t *testing.T) {
 		}
 	}
 }
+
+// TestFirewallHandoffArgs: the hand-off holds its values to tui-firewall
+// 0.6.0's own rules, so it never ends in tui-firewall refusing to start.
+func TestFirewallHandoffArgs(t *testing.T) {
+	ok := FirewallHandoff{Open: []FirewallPort{{Port: 443, Proto: "tcp"}, {Port: 3478, Proto: "udp"}},
+		Comment: "tailnet control plane and DERP STUN"}
+	args, err := ok.Args()
+	if err != nil || strings.Join(args, " ") != "--open 443/tcp,3478/udp --comment tailnet control plane and DERP STUN" {
+		t.Errorf("args = %q, %v", args, err)
+	}
+	if args, err := (FirewallHandoff{}).Args(); err != nil || args != nil {
+		t.Errorf("no port: %q, %v", args, err)
+	}
+	bad := []FirewallHandoff{
+		{Open: []FirewallPort{{Port: 0, Proto: "tcp"}}},
+		{Open: []FirewallPort{{Port: 65536, Proto: "tcp"}}},
+		{Open: []FirewallPort{{Port: 53, Proto: "sctp"}}},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}, {Port: 53, Proto: "udp"}}},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}}, Comment: "two\nlines"},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}}, Comment: strings.Repeat("x", 129)},
+		{Open: []FirewallPort{{Port: 53, Proto: "udp"}}, Comment: "--check"},
+	}
+	for _, h := range bad {
+		if _, err := h.Args(); err == nil {
+			t.Errorf("%+v accepted", h)
+		}
+	}
+}
+
+func TestFirewallVersion(t *testing.T) {
+	cases := map[string]bool{
+		"tui-firewall 0.6.0\n": true, "tui-firewall v0.7.1": true, "tui-firewall 1.0.0": true,
+		"tui-firewall 0.5.0": false, "tui-firewall 0.5.9": false, "tui-firewall dev": false, "": false,
+		"tui-firewall 0.6.0-rc.1": true,
+	}
+	for out, want := range cases {
+		if got := FirewallTakesOpen(ParseFirewallVersion(out)); got != want {
+			t.Errorf("%q: %v, want %v", out, got, want)
+		}
+	}
+}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tui-tools/tui-kit/runner"
@@ -360,16 +362,24 @@ type firewallDoneMsg struct{ err error }
 // this program, tui-firewall draws on the real terminal, and this screen is
 // restored when it exits, then the ports are read again. It is not previewed
 // as a change because it is not one: tui-firewall previews and confirms
-// whatever it changes (issue #15). The binary is looked for at the moment f
+// whatever it changes (issue #15). The ports readiness found closed are
+// handed over, so tui-firewall opens its add form prefilled with each one
+// (issue #32); nothing closed is a plain launch. The binary is looked for at the moment f
 // is pressed, not taken from the last read, so one installed in another
 // terminal is found; when it is not there, f offers its install, previewed
 // like i's (issue #25).
 func (a *app) launchFirewall() tea.Cmd {
-	process, err := a.hs.LaunchFirewall()
-	if err != nil {
+	handoff := headscale.ClosedPorts(headscale.ReadinessFor(a.hsState, time.Now()))
+	launch, err := a.hs.LaunchFirewall(handoff)
+	if errors.Is(err, headscale.ErrFirewallMissing) {
 		return a.startInstallFirewall()
 	}
+	if err != nil {
+		a.setStatus(ui.StatusError, "tui-firewall: "+err.Error())
+		return nil
+	}
 	a.busy = true
-	a.setStatusf(ui.StatusInfo, "running %s…", process)
-	return tea.Exec(process, func(err error) tea.Msg { return firewallDoneMsg{err: err} })
+	a.firewallHint = launch.Hint
+	a.setStatusf(ui.StatusInfo, "running %s…", launch.Process)
+	return tea.Exec(launch.Process, func(err error) tea.Msg { return firewallDoneMsg{err: err} })
 }

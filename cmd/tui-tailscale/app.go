@@ -183,6 +183,9 @@ type app struct {
 	// confirmed and runs: it comes back if the write is cancelled or fails,
 	// and is forgotten once the file holds the key.
 	keyNotice notice
+	// firewallHint is the status line for when tui-firewall hands the
+	// terminal back, set when it was too old to take the ports (issue #32).
+	firewallHint string
 	// filePicker is the open file picker; its purpose is inputPurpose, since
 	// it answers the steps a typed path used to. files is the filesystem it
 	// lists: nil is this machine's, --demo a made-up tree.
@@ -591,9 +594,15 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case firewallDoneMsg:
 		a.busy = false
-		if msg.err != nil {
+		hint := a.firewallHint
+		a.firewallHint = ""
+		switch {
+		case msg.err != nil:
 			a.setStatus(ui.StatusError, "tui-firewall: "+runner.FirstLine(msg.err.Error()))
-		} else {
+		case hint != "":
+			// An older tui-firewall got no ports: say which to add.
+			a.setStatus(ui.StatusWarn, hint)
+		default:
 			a.setStatus(ui.StatusInfo, "back from tui-firewall · the ports are read again")
 		}
 		return a, a.reprobeRead(false)
