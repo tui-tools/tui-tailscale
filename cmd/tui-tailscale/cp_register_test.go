@@ -148,3 +148,21 @@ func TestRegisterWithoutOIDCIsAPlainConfirm(t *testing.T) {
 		t.Errorf("confirm = %+v", a.confirm)
 	}
 }
+
+// The users panel says where the relays come from, and the ready line adds
+// the note about Tailscale's public DERP servers (issue #27).
+func TestRelaysOnThePanelAndTheReadyLine(t *testing.T) {
+	a, _ := fixtureApp(t, "")
+	if !strings.Contains(ansi.Strip(a.View()), "relays      Tailscale's public DERP servers") {
+		t.Errorf("no relays line:\n%s", ansi.Strip(a.View()))
+	}
+	a.hsState.Registrations = nil
+	for i := range a.hsState.Nodes {
+		a.hsState.Nodes[i].ApprovedRoutes = a.hsState.Nodes[i].AvailableRoutes
+	}
+	a.width = 400
+	if line := ansi.Strip(a.readinessLine()); !strings.Contains(line, "readiness") ||
+		!strings.Contains(line, "Tailscale's public DERP servers") {
+		t.Errorf("ready line = %q", line)
+	}
+}

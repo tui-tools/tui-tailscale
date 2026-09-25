@@ -100,6 +100,8 @@ Back on the control plane:
 
 8. **Open the ports.** The readiness line reads the host firewall and says when the control port (`443/tcp`, the port headscale listens on) is closed, and whether `41641/udp` (the nodes' direct connections) is; `f` hands the terminal to tui-firewall to open them, and they are read again when it exits. See [the ports step](#the-next-step). With the firewall closed a client cannot reach the control plane at all, so on a fresh host this comes before the first join.
 
+**Relays.** Private here means the control plane, the names and the certificates are yours; the relays are not, by default. When two nodes cannot connect directly (both behind NAT, or `41641/udp` closed), their traffic goes through a DERP relay, and headscale's example configuration keeps its own embedded DERP server off (`derp.server.enabled: false`) and hands clients Tailscale's public DERP map (`derp.urls: [https://controlplane.tailscale.com/derpmap/default]`). So a private tailnet still relays through Tailscale Inc.'s servers and fetches that map from Tailscale's control plane: the traffic is end-to-end encrypted, but the relay sees which nodes talk to each other and when. `tailscale ping <node>` says `via DERP(<region>)` when that happens. The users panel shows where the relays come from (`relays`), and once nothing else is missing the readiness line adds the same note; `--check` has it as `readiness.relays` (`tailscale-public`, `embedded`, `embedded+tailscale-public` or `custom`) and `readiness.relayHint`. To keep relaying in-house, enable headscale's embedded DERP in `config.yaml` (`derp.server.enabled: true`, with its region id, code and name and `stun_listen_addr`, which needs `3478/udp` open), remove the public map from `derp.urls`, and restart; headscale's embedded DERP needs `server_url` on https, which this walkthrough already has.
+
 This path was run end to end in the family lab on two Ubuntu guests (26.04 as the control plane, 24.04 as the client), with the certificate issued for an IP SAN and the client reaching the control plane by that address.
 
 ## Manage, not view
@@ -210,7 +212,7 @@ Once a node is registered, a way in for the next machine is no longer a missing 
 
 The hint bar at the bottom says the same: on the screen where the next step is done, its key comes first, marked `◂ next` (`S` on the users screen while the server is not set up, `j` on the node screen while there is no node, `r` on the nodes screen while routes wait).
 
-`--check` carries the same answer as `headscale.readiness`: each step as a boolean (`serverConfigured`, `unitRunning`, `unitEnabled`, `oidcConfigured`, `preAuthKey`, `firstNode`, `routesApproved`, with `routesPending`, `pendingRegistrations` and `refusedRegistrations` counted), `next` naming the first missing one, and `nextStep` the sentence.
+`--check` carries the same answer as `headscale.readiness`: each step as a boolean (`serverConfigured`, `unitRunning`, `unitEnabled`, `oidcConfigured`, `preAuthKey`, `firstNode`, `routesApproved`, with `routesPending`, `pendingRegistrations` and `refusedRegistrations` counted), `next` naming the first missing one, and `nextStep` the sentence. `relays` says where the DERP relays come from and `relayHint` is the note when they are Tailscale's public servers (see [Private tailnet](#private-tailnet)); neither is a step.
 
 ### Nodes waiting to register (`R` on the nodes screen)
 

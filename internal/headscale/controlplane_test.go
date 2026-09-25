@@ -750,3 +750,47 @@ func TestRedirectURI(t *testing.T) {
 		}
 	}
 }
+
+// Where the relays come from (issue #27): headscale's example configuration
+// keeps the embedded DERP off and lists Tailscale's public map, and an absent
+// derp.urls means that map too.
+func TestRelays(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml, want string
+	}{
+		{"example", readFixture(t, "headscale-config-letsencrypt.yaml"), RelaysPublic},
+		{"absent", "server_url: https://vpn.example.com\n", RelaysPublic},
+		{"embedded", "derp:\n  server:\n    enabled: true\n  urls: []\n", RelaysEmbedded},
+		{"both", "derp:\n  server:\n    enabled: true\n  urls:\n    - https://controlplane.tailscale.com/derpmap/default\n",
+			RelaysEmbeddedAndPublic},
+		{"custom", "derp:\n  server:\n    enabled: false\n  urls: []\n  paths:\n    - /etc/headscale/derp.yaml\n",
+			RelaysCustom},
+	} {
+		cp, err := ParseHeadscaleConfig([]byte(tc.yaml))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := Relays(cp); got != tc.want {
+			t.Errorf("%s: relays = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if Relays(ControlPlane{}) != "" {
+		t.Error("an unread configuration claims relays")
+	}
+}
+
+// The public relays are a note on the readiness, never a step.
+func TestReadinessRelayHint(t *testing.T) {
+	f := NewFake()
+	f.SetService("active", "enabled")
+	state, _ := f.Load(t.Context())
+	r := ReadinessFor(state, state.Nodes[0].LastSeen)
+	if r.Relays != RelaysPublic || !strings.Contains(r.RelayHint, "Tailscale's public DERP") {
+		t.Errorf("readiness = %+v", r)
+	}
+	state.ControlPlane.DERPEmbedded, state.ControlPlane.DERPPublicMap = true, false
+	r = ReadinessFor(state, state.Nodes[0].LastSeen)
+	if r.Relays != RelaysEmbedded || r.RelayHint != "" {
+		t.Errorf("embedded readiness = %+v", r)
+	}
+}

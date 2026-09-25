@@ -156,6 +156,11 @@ func (a *app) readinessLine() string {
 		// Not a missing step: a suggestion, after the step and muted.
 		line += a.theme.Muted.Render(" · " + r.Hint)
 	}
+	if r.RelayHint != "" && r.Next == headscale.NextReady {
+		// A note, not a step: shown once nothing else is missing, and
+		// always in the panel's relays line and in --check.
+		line += a.theme.Muted.Render(" · " + r.RelayHint)
+	}
 	return ui.Truncate(line, a.width)
 }
 
@@ -196,6 +201,7 @@ func (a *app) controlPlanePanel() []string {
 	lines = append(lines,
 		server,
 		"  transport   "+headscale.TransportNote(cp),
+		"  relays      "+headscale.RelaysNote(cp),
 		"  redirect    "+redirectLine(cp),
 		"  oidc        issuer "+orDash(oidc.Issuer)+
 			" · client_id "+orDash(oidc.ClientID)+" · "+secretState(oidc),

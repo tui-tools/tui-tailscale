@@ -116,6 +116,14 @@ type ControlPlane struct {
 	Ownership Ownership `json:"ownership"`
 	// OIDC is the identity-provider section.
 	OIDC OIDCConfig `json:"oidc"`
+	// DERPEmbedded is derp.server.enabled: headscale runs a relay of its
+	// own. DERPPublicMap reports that derp.urls lists Tailscale's public
+	// DERP map (it is headscale's default when the key is absent), and
+	// DERPCustom that other maps or files (derp.paths) are listed. See
+	// Relays (issue #27).
+	DERPEmbedded  bool `json:"derpEmbedded"`
+	DERPPublicMap bool `json:"derpPublicMap"`
+	DERPCustom    bool `json:"derpCustom"`
 	// Raw is the file byte for byte, kept so an edit can be a minimal splice
 	// of the original rather than a re-serialisation of it. It is deliberately
 	// not serialised: --check prints facts, not somebody's configuration file.
@@ -178,6 +186,15 @@ type headscaleConfigDoc struct {
 		MagicDNS   *bool  `yaml:"magic_dns"`
 		BaseDomain string `yaml:"base_domain"`
 	} `yaml:"dns"`
+	DERP struct {
+		Server struct {
+			Enabled bool `yaml:"enabled"`
+		} `yaml:"server"`
+		// URLs is nil when the key is absent, which headscale reads as
+		// Tailscale's public map.
+		URLs  *flexList `yaml:"urls"`
+		Paths flexList  `yaml:"paths"`
+	} `yaml:"derp"`
 	OIDC struct {
 		Issuer               string   `yaml:"issuer"`
 		ClientID             string   `yaml:"client_id"`
@@ -271,6 +288,18 @@ func ParseHeadscaleConfig(data []byte) (ControlPlane, error) {
 	case "", "sqlite", "sqlite3":
 		cp.DatabasePath = strings.TrimSpace(doc.Database.Sqlite.Path)
 	}
+	cp.DERPEmbedded = doc.DERP.Server.Enabled
+	cp.DERPPublicMap = doc.DERP.URLs == nil
+	if doc.DERP.URLs != nil {
+		for _, u := range *doc.DERP.URLs {
+			if IsPublicDERPMap(u) {
+				cp.DERPPublicMap = true
+			} else {
+				cp.DERPCustom = true
+			}
+		}
+	}
+	cp.DERPCustom = cp.DERPCustom || len(doc.DERP.Paths) > 0
 	o := doc.OIDC
 	cp.OIDC = OIDCConfig{
 		Issuer:             strings.TrimSpace(o.Issuer),
@@ -288,6 +317,61 @@ func ParseHeadscaleConfig(data []byte) (ControlPlane, error) {
 	}
 	cp.OIDC.ClientSecretSet = cp.OIDC.ClientSecretPath != "" || cp.OIDC.ClientSecretInline
 	return cp, nil
+}
+
+// PublicDERPMapHost serves Tailscale Inc.'s DERP map, the default of
+// headscale's derp.urls.
+const PublicDERPMapHost = "controlplane.tailscale.com"
+
+// IsPublicDERPMap reports whether a derp.urls entry is Tailscale's public map.
+func IsPublicDERPMap(u string) bool {
+	return URLHost(strings.TrimSpace(u)) == PublicDERPMapHost
+}
+
+// Where a control plane's relays come from, for Relays.
+const (
+	// RelaysPublic: only Tailscale's public DERP servers.
+	RelaysPublic = "tailscale-public"
+	// RelaysEmbedded: headscale's own embedded DERP server, and no public map.
+	RelaysEmbedded = "embedded"
+	// RelaysEmbeddedAndPublic: the embedded server, with the public map still
+	// listed next to it; a client may use either.
+	RelaysEmbeddedAndPublic = "embedded+tailscale-public"
+	// RelaysCustom: DERP maps or files of the operator's own, no public map.
+	RelaysCustom = "custom"
+)
+
+// Relays says where the DERP relays a control plane hands its clients come
+// from, empty when config.yaml could not be read. The relays carry traffic
+// only when two nodes cannot connect directly, end-to-end encrypted, but the
+// relay sees which nodes talk and when.
+func Relays(cp ControlPlane) string {
+	switch {
+	case !cp.Readable:
+		return ""
+	case cp.DERPEmbedded && cp.DERPPublicMap:
+		return RelaysEmbeddedAndPublic
+	case cp.DERPEmbedded:
+		return RelaysEmbedded
+	case cp.DERPPublicMap:
+		return RelaysPublic
+	}
+	return RelaysCustom
+}
+
+// RelaysNote is the panel's words for Relays.
+func RelaysNote(cp ControlPlane) string {
+	switch Relays(cp) {
+	case RelaysPublic:
+		return "Tailscale's public DERP servers (derp.server.enabled is false)"
+	case RelaysEmbedded:
+		return "embedded DERP on this host"
+	case RelaysEmbeddedAndPublic:
+		return "embedded DERP on this host, and Tailscale's public DERP map next to it"
+	case RelaysCustom:
+		return "a DERP map of your own (derp.urls / derp.paths)"
+	}
+	return "—"
 }
 
 // DefaultServiceUser is who a unit runs as when it names nobody: systemd's

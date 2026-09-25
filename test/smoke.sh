@@ -264,6 +264,12 @@ check "check --demo counts the registration the IdP refused" \
   "$bin --demo --check" \
   '"refusedRegistrations": 1'
 
+# 1.0.1: where the relays come from, and the note when they are Tailscale's
+# public DERP servers (issue #27).
+check "check --demo says the relays are Tailscale's public ones" \
+  "$bin --demo --check" \
+  '"relays": "tailscale-public"'
+
 check "check --demo prints no registration id" \
   "$bin --demo --check | grep -c 'hskey-' || true" \
   '^0$'

@@ -74,6 +74,13 @@ type Readiness struct {
 	// Hint is a non-blocking suggestion shown after the step, when there is
 	// one: how to add another machine once the last key is spent.
 	Hint string `json:"hint,omitempty"`
+	// Relays says where the DERP relays come from: tailscale-public,
+	// embedded, embedded+tailscale-public or custom; absent when config.yaml
+	// could not be read. RelayHint is a non-blocking note when they are
+	// Tailscale's public servers: a private tailnet still relays through a
+	// third party unless headscale's embedded DERP is enabled (issue #27).
+	Relays    string `json:"relays,omitempty"`
+	RelayHint string `json:"relayHint,omitempty"`
 	// Next is the first missing step: install, server, unit, identity,
 	// first-node, routes, or ready.
 	Next string `json:"next"`
@@ -121,6 +128,11 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	}
 	r.RoutesApproved = r.RoutesPending == 0
 	r.CanJoinMore = r.OIDCConfigured || r.PreAuthKey
+	r.Relays = Relays(cp)
+	if h.Present && r.Relays == RelaysPublic {
+		r.RelayHint = "relays go through Tailscale's public DERP servers when nodes cannot " +
+			"connect directly (derp.server.enabled is false)"
+	}
 	if !r.CanJoinMore {
 		r.CanJoinMoreReason = joinMoreReason(h.PreAuthKeys, now)
 		if r.FirstNode {
