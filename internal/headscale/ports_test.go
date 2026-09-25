@@ -100,3 +100,27 @@ func TestReadinessPortsStep(t *testing.T) {
 		t.Errorf("demo readiness = %+v", r)
 	}
 }
+
+// The control port is the one headscale binds: a port forward in front of
+// the host can give clients another one in server_url. Behind a reverse proxy
+// it is the proxy's, server_url's.
+func TestControlPortFollowsTheBind(t *testing.T) {
+	fw, _ := ParseIptablesInput("-P INPUT DROP\n-A INPUT -p tcp --dport 443 -j ACCEPT\n")
+	for _, tc := range []struct {
+		url, listen string
+		want        int
+	}{
+		{"https://192.0.2.10:18443", "0.0.0.0:443", 443},
+		{"https://vpn.example.com", "127.0.0.1:8080", 443},
+		{"http://192.0.2.10:8080", "", 8080},
+		{"https://vpn.example.com", ":8443", 8443},
+	} {
+		p := PortsFor(fw, tc.url, tc.listen)
+		if p.ControlPort != tc.want {
+			t.Errorf("%s / %s: port %d, want %d", tc.url, tc.listen, p.ControlPort, tc.want)
+		}
+	}
+	if p := PortsFor(fw, "https://192.0.2.10:18443", "0.0.0.0:443"); p.Control != PortOpen {
+		t.Errorf("443 is open: %+v", p)
+	}
+}

@@ -534,8 +534,12 @@ type PortsReadiness struct {
 	// Source is where the answer was read from: tui-firewall, nftables,
 	// iptables, or empty when the firewall could not be read.
 	Source string `json:"source,omitempty"`
-	// ControlPort is the server_url port (443 for https), and Control what
-	// the firewall does to new connections on it over TCP.
+	// ControlPort is the port the host firewall has to let clients in on,
+	// and Control what the firewall does to new connections on it over TCP.
+	// It is listen_addr's port when headscale binds a public address:
+	// server_url's can differ, when a NAT or a port forward in front of the
+	// host maps another port onto it. Behind a reverse proxy (a loopback
+	// bind) it is server_url's, the port the proxy answers on.
 	ControlPort int       `json:"controlPort"`
 	Control     PortState `json:"control"`
 	// NodePort is tailscale's 41641/udp, and Node what the firewall does to
@@ -545,10 +549,13 @@ type PortsReadiness struct {
 }
 
 // PortsFor judges the two ports against a read firewall.
-func PortsFor(fw Firewall, serverURL string) PortsReadiness {
+func PortsFor(fw Firewall, serverURL, listenAddr string) PortsReadiness {
 	p := PortsReadiness{Source: fw.Source, NodePort: NodePort,
 		Control: PortUnknown, Node: PortUnknown}
-	if serverURL != "" {
+	switch {
+	case listenAddr != "" && !IsLoopbackHost(ListenHost(listenAddr)) && ListenPort(listenAddr) > 0:
+		p.ControlPort = ListenPort(listenAddr)
+	case serverURL != "":
 		p.ControlPort = URLPort(serverURL)
 	}
 	if p.ControlPort > 0 {
