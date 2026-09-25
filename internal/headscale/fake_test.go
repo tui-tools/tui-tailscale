@@ -374,7 +374,9 @@ func TestInstallWithTheRepositoryConfigured(t *testing.T) {
 		"apt": {ubuntu(), []string{"apt-get update", "apt-get install -y headscale"}},
 		"dnf": {pkgmgr.Distro{ID: "fedora", VersionID: "42"},
 			[]string{"dnf install -y headscale"}},
-		"pacman": {pkgmgr.Distro{ID: "omarchy-server", Like: []string{"omarchy", "arch"}},
+		"omarchy": {pkgmgr.Distro{ID: "omarchy-server", Like: []string{"omarchy", "arch"}},
+			[]string{"pacman -S --needed --noconfirm tui-tools/headscale"}},
+		"arch": {pkgmgr.Distro{ID: "arch"},
 			[]string{"pacman -Syu --needed --noconfirm tui-tools/headscale"}},
 	}
 	for name, tc := range cases {
@@ -393,5 +395,31 @@ func TestInstallWithTheRepositoryConfigured(t *testing.T) {
 	if _, err := BuildInstall(pkgmgr.Distro{ID: "gentoo"}, RepoState{}); err == nil ||
 		!strings.Contains(err.Error(), ManualInstallURL) {
 		t.Errorf("an unknown distribution: %v", err)
+	}
+}
+
+// Omarchy's pacman hook refuses a direct -Syu: a fresh install there adds the
+// repository (whose setup refreshes the databases) and installs, and never
+// upgrades the machine.
+func TestInstallOnOmarchyNeverUpgrades(t *testing.T) {
+	plan, err := BuildInstall(pkgmgr.Distro{ID: "omarchy-server", Like: []string{"omarchy", "arch"}},
+		RepoState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []string
+	for _, s := range plan.Steps {
+		steps = append(steps, s.String())
+		if strings.Contains(s.String(), "-Syu") {
+			t.Errorf("an Omarchy install upgrades the machine: %q", s.String())
+		}
+	}
+	n := len(steps)
+	if n < 2 || steps[n-2] != "pacman -Sy" ||
+		steps[n-1] != "pacman -S --needed --noconfirm tui-tools/headscale" {
+		t.Errorf("steps = %q", steps)
+	}
+	if !strings.Contains(plan.Body, "omarchy update") {
+		t.Errorf("the body does not say how Omarchy upgrades: %q", plan.Body)
 	}
 }

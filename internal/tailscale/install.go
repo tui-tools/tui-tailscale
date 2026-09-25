@@ -30,14 +30,17 @@ type Distro struct {
 // osReleasePath is where the distribution identifies itself.
 const osReleasePath = "/etc/os-release"
 
-// DetectDistro reads /etc/os-release. An unreadable file is an unknown
+// DetectDistro reads /etc/os-release, and whether Omarchy's pacman guard
+// hook is installed, through the kit. An unreadable file is an unknown
 // distribution, not an error: the install instructions then say so.
 func DetectDistro() Distro {
 	raw, err := os.ReadFile(osReleasePath)
 	if err != nil {
 		return Distro{}
 	}
-	return ParseDistro(string(raw))
+	d := ParseDistro(string(raw))
+	d.UpdateGuard = pkgmgr.DetectDistro().UpdateGuard
+	return d
 }
 
 // ParseDistro reads an os-release file: ID, ID_LIKE, PRETTY_NAME and
@@ -75,17 +78,6 @@ func (d Distro) Manager() pkgmgr.Manager {
 		}
 	}
 	return ""
-}
-
-// omarchy reports an Omarchy system, whose own update command is the only
-// way it lets the machine be upgraded.
-func (d Distro) omarchy() bool {
-	for _, id := range append([]string{d.ID}, d.Like...) {
-		if strings.HasPrefix(id, "omarchy") {
-			return true
-		}
-	}
-	return false
 }
 
 // aptFamily is the path segment of Tailscale's apt repository: "ubuntu" or
@@ -167,17 +159,14 @@ func buildInstall(d Distro) (Plan, error) {
 			enable,
 		}
 	case pkgmgr.ManagerPacman:
-		if d.omarchy() {
-			// Omarchy refuses a direct system upgrade: its pacman hook aborts
-			// any -Syu that does not come from `omarchy update`, which syncs
-			// the database and upgrades the machine as one transaction. What
-			// is left is to install against the database the last update
-			// synced, without -y, which is exactly not a partial upgrade.
-			plan.Body = "tailscale is in Arch's own repositories. Omarchy upgrades the " +
-				"machine only through `omarchy update` (its pacman hook refuses a direct " +
-				"-Syu), so the package is installed against the package database the last " +
-				"update synced — no -y, so no partial upgrade. If pacman cannot find the " +
-				"package file, run `omarchy update` first. Then tailscaled is started."
+		if d.Omarchy() {
+			// The kit's rule for Omarchy (pkgmgr.BuildInstallOn): its pacman
+			// hook refuses any -Syu that does not come from `omarchy update`,
+			// so the package is installed against the databases the last
+			// update synced, without -y. The kit's builders take tui-* names
+			// only, so the step itself is built here.
+			plan.Body = "tailscale is in Arch's own repositories. " + pkgmgr.OmarchyNote +
+				" Then tailscaled is started."
 			plan.Steps = []runner.Command{
 				{Argv: []string{"pacman", "-S", "--needed", "--noconfirm", "tailscale"},
 					Description: "Install tailscale"},
