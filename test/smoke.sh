@@ -340,6 +340,35 @@ if command -v headscale >/dev/null 2>&1; then
   check "check carries no URL of this control plane" \
     "sudo -n $bin --check | grep -v '\"loginUrl\":' | grep -c '://' || true" \
     '^0$'
+
+  # 1.1.0: a pre-auth key is shown once on screen and never reaches --check
+  # (issue #30); headscale 0.26 and later print keys as hskey-auth-….
+  check "check carries no pre-auth key" \
+    "sudo -n $bin --check | grep -c 'hskey-auth-' || true" \
+    '^0$'
+
+  # 1.1.0: the relays follow derp.server.enabled, and with the embedded relay
+  # on, readiness reads its STUN port (issue #28).
+  derp_enabled=$(sudo -n cat /etc/headscale/config.yaml 2>/dev/null | awk '
+    /^derp:/ { d = 1; next } /^[^ #]/ { d = 0 }
+    d && /^  server:/ { s = 1; next } d && /^  [^ #]/ { s = 0 }
+    s && /^    enabled:/ { print $2; exit }')
+  if [[ $derp_enabled == true ]]; then
+    check "check reports the embedded DERP relay config.yaml enables" \
+      "sudo -n $bin --check" \
+      '"relays": "embedded(\+tailscale-public)?"'
+    stun=$(sudo -n cat /etc/headscale/config.yaml 2>/dev/null |
+      grep -m1 -oE 'stun_listen_addr: *"?[^"]*:[0-9]+' | grep -oE '[0-9]+$')
+    if [[ -n $stun ]] && sudo -n "$bin" --check 2>/dev/null | grep -q '"ports":'; then
+      check "check reads the STUN port of the embedded relay" \
+        "sudo -n $bin --check" \
+        "\"stunPort\": ${stun},"
+    fi
+  elif [[ -n $derp_enabled ]]; then
+    check "check reports no embedded relay while config.yaml has it off" \
+      "sudo -n $bin --check" \
+      '"relays": "(tailscale-public|custom)"'
+  fi
 else
   # No headscale: the tool must say so, give the next step, and this
   # distribution's commands from the tui-tools repository.
@@ -348,7 +377,7 @@ else
     '"next": "install"'
   check "check gives the headscale install from the tui-tools repository" \
     "$bin --check" \
-    '(apt-get install -y headscale|dnf install -y headscale|pacman -Syu --needed --noconfirm tui-tools/headscale)'
+    '(apt-get install -y headscale|dnf install -y headscale|pacman -Syu --needed --noconfirm tui-tools/headscale|pacman -S --needed --noconfirm tui-tools/headscale)'
 fi
 
 # --- compatibility evidence ------------------------------------------------

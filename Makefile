@@ -73,6 +73,7 @@ screenshots: build
 		--screen 'trust=jnew\r\x15https://headscale.lab.internal\r' \
 		--screen 'pairs=3Stls_cert\r\r\r' --screen 'certfile=3Stls_cert\r\r\rother\rl' \
 		--screen 'login=Lyj\r\r\r\r\r\r\ry' \
+		--screen 'relays=3S\r\r\r\r' --screen 'preauth=5n\ry' \
 		--screen exit=x --screen help=?
 
 ## readme: regenerate the generated README sections from tool.json.
