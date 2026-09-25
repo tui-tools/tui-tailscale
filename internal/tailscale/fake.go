@@ -36,6 +36,14 @@ type Fake struct {
 	// the demo "logs in" on its own, 0 for never; pendingReads counts them
 	// down for the login pending now.
 	completeAfter, pendingReads int
+	// confirmPhases are the states a login the browser confirmed still
+	// reads as, one per read, before Running: the real client goes
+	// NeedsLogin (the URL gone) → NoState or Starting → Running, and the
+	// node screen must not call that an expired login (issue #20). phases is
+	// what is left of them for the login being confirmed now, and
+	// confirming says one is.
+	confirmPhases, phases []string
+	confirming            bool
 	// caTrusted records that the trust-CA step ran: from then on the demo's
 	// private login servers verify.
 	caTrusted bool
@@ -102,18 +110,53 @@ func (f *Fake) CompleteLoginAfter(n int) {
 	f.completeAfter = n
 }
 
-// CompleteLogin finishes a pending browser login now, as the browser would.
+// SetConfirmPhases sets the states a confirmed browser login reads as, one per
+// read, before the node runs — e.g. NeedsLogin, NoState, Starting — the way
+// tailscaled takes a moment to pick up a registration headscale already
+// confirmed. None (the default) goes straight to Running.
+func (f *Fake) SetConfirmPhases(states ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.confirmPhases = append([]string(nil), states...)
+}
+
+// CompleteLogin finishes a pending browser login now, as the browser would,
+// straight to Running.
 func (f *Fake) CompleteLogin() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.state.Node.AuthURL == "" && !f.confirming {
+		return
+	}
 	f.completeLogin()
+}
+
+// ConfirmLogin is the browser confirming a pending login: the URL goes away
+// at once, and the node reads as the confirm phases before it runs.
+func (f *Fake) ConfirmLogin() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.confirmLogin()
+}
+
+// confirmLogin starts the confirm phases, or completes the login when there
+// are none.
+func (f *Fake) confirmLogin() {
+	if f.state.Node.AuthURL == "" {
+		return
+	}
+	if len(f.confirmPhases) == 0 {
+		f.completeLogin()
+		return
+	}
+	f.state.Node = Node{BackendState: f.confirmPhases[0], Version: f.state.Node.Version}
+	f.phases = append([]string(nil), f.confirmPhases[1:]...)
+	f.confirming = true
 }
 
 // completeLogin logs the pending node in with the settings it joined with.
 func (f *Fake) completeLogin() {
-	if f.state.Node.AuthURL == "" {
-		return
-	}
+	f.confirming, f.phases = false, nil
 	node := demoState().Node
 	if h := f.state.Prefs.Hostname; h != "" {
 		node.HostName = h
@@ -136,10 +179,15 @@ func (f *Fake) ExpireLogin() {
 func (f *Fake) Load(_ context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.state.Node.AuthURL != "" && f.completeAfter > 0 {
+	switch {
+	case f.confirming && len(f.phases) == 0:
+		f.completeLogin()
+	case f.confirming:
+		f.state.Node.BackendState, f.phases = f.phases[0], f.phases[1:]
+	case f.state.Node.AuthURL != "" && f.completeAfter > 0:
 		f.pendingReads--
 		if f.pendingReads <= 0 {
-			f.completeLogin()
+			f.confirmLogin()
 		}
 	}
 	if !f.detected {
@@ -324,6 +372,7 @@ func (f *Fake) applyJoin(flags map[string]string) (string, error) {
 
 	if !withKey && !stayLoggedIn {
 		url := strings.TrimRight(server, "/") + DemoRegisterPath
+		f.confirming, f.phases = false, nil
 		f.state.Node = Node{BackendState: StateNeedsLogin, AuthURL: url,
 			Version: f.state.Node.Version}
 		f.state.Peers = nil

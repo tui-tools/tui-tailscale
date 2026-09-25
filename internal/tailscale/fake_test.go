@@ -173,3 +173,35 @@ func TestFakeUpWhileLoggedOutIsRefused(t *testing.T) {
 		t.Error("a logged-out node cannot simply come up")
 	}
 }
+
+// A confirmed browser login goes NeedsLogin (URL gone) → NoState → Starting →
+// Running, one state per read, the way tailscaled picks up a registration
+// headscale already confirmed (issue #20).
+func TestFakeConfirmedLoginPhases(t *testing.T) {
+	f := NewFake()
+	f.SetConfirmPhases(StateNeedsLogin, StateNoState, StateStarting)
+	f.CompleteLoginAfter(1)
+	if _, err := runPlan(t, f, Request{Action: ActionLogout}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPlan(t, f, Request{Action: ActionJoin,
+		LoginServer: DemoLoginServer, LoggedIn: false}); err == nil {
+		t.Fatal("a join without a key should time out waiting for the browser")
+	}
+	var got []string
+	for i := 0; i < 5; i++ {
+		s, err := f.Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := s.Node.BackendState
+		if s.Node.AuthURL != "" {
+			entry += "+url"
+		}
+		got = append(got, entry)
+	}
+	want := []string{"NeedsLogin", "NoState", "Starting", "Running", "Running"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("states = %v, want %v", got, want)
+	}
+}

@@ -126,6 +126,12 @@ func (a *app) noteLines() []string {
 // readinessLine is the guided half of the control plane: the next missing
 // step, in order, with the key that does it.
 func (a *app) readinessLine() string {
+	if host := a.remoteControlPlane(); host != "" {
+		// Nothing is missing here: this machine is a node, and its control
+		// plane lives on another one.
+		return ui.Truncate(a.theme.Muted.Render("this machine is a node; the control plane is "+
+			host+" · i installs headscale only to run a control plane here"), a.width)
+	}
 	r := headscale.ReadinessFor(a.hsState, time.Now())
 	style := a.theme.Warn
 	label := "next step  "

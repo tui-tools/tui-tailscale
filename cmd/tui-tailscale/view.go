@@ -269,8 +269,15 @@ func (a *app) stateStyle(state string) lipgloss.Style {
 // cannot be read as this node's peers.
 func (a *app) tabsView() string {
 	var out strings.Builder
+	// On a machine that is only a node of somebody else's control plane the
+	// headscale tabs are dimmed: they are there to install one here, not
+	// the place this node is managed from (issue #20).
+	remote := a.remoteControlPlane() != ""
+	dim := a.theme.Muted.Faint(true)
 	for s := screen(0); s < screenCount; s++ {
 		switch {
+		case s == screenUsers && remote:
+			out.WriteString(dim.Render(" ┃ headscale (not on this machine):"))
 		case s == screenUsers:
 			out.WriteString(a.theme.Muted.Render(" ┃ headscale:"))
 		case s > 0:
@@ -287,9 +294,28 @@ func (a *app) tabsView() string {
 			out.WriteString(a.theme.Accent.Render(label))
 			continue
 		}
+		if remote && s.controlPlane() {
+			out.WriteString(dim.Render(label))
+			continue
+		}
 		out.WriteString(a.theme.Muted.Render(label))
 	}
 	return ui.Truncate(out.String(), a.width)
+}
+
+// remoteControlPlane is the host of the control plane this node answers to
+// when that control plane is not on this machine: headscale is absent here
+// and the node is logged in to a login server. Empty otherwise — while
+// reading, on a machine with headscale, or on a node not joined anywhere.
+func (a *app) remoteControlPlane() string {
+	if a.hsState.Present || (a.loading && a.hsCompat.Backend == "") || !a.state.LoggedIn() {
+		return ""
+	}
+	server := a.state.Prefs.ControlURL
+	if server == "" && a.state.PrefsRead {
+		server = tailscale.DefaultControlURL
+	}
+	return tailscale.URLHost(server)
 }
 
 // header renders the facts at the top of the screen.
@@ -333,6 +359,8 @@ func (a *app) backendFacts() []ui.Fact {
 		facts = append(facts, fact)
 	}
 	switch {
+	case a.remoteControlPlane() != "":
+		facts = append(facts, ui.Fact{Label: "control", Value: "headscale: not installed (node only)"})
 	case !a.hsState.Present && (!a.loading || a.hsCompat.Backend != ""):
 		facts = append(facts, ui.Fact{Label: "control", Value: "headscale: not installed"})
 	case a.hsCompat.Backend != "" && a.hsState.Present:

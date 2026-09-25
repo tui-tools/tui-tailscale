@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tui-tools/tui-kit/compat"
@@ -45,11 +46,62 @@ func defaults() map[string]string {
 	}
 }
 
+// The --demo cases beyond the default sample tailnet, each a real situation
+// the screens have to handle, reachable without the machine that has it.
+const (
+	// demoNodeOnly is a machine that is only a node: no headscale here, the
+	// node joined to a control plane elsewhere (issue #20).
+	demoNodeOnly = "node-only"
+)
+
+// demoCases lists the accepted --demo values, for the usage and the error.
+var demoCases = []string{demoNodeOnly}
+
+// demoFlag is --demo: bare, it runs the sample tailnet; --demo=<case> runs
+// one of demoCases instead.
+type demoFlag struct {
+	on   *bool
+	name *string
+}
+
+// String renders the flag's current value for the usage text.
+func (d demoFlag) String() string {
+	if d.name == nil {
+		return ""
+	}
+	return *d.name
+}
+
+// Set accepts the bare form ("true", from `--demo`) and a case name.
+func (d demoFlag) Set(value string) error {
+	switch value {
+	case "", "true":
+		*d.on, *d.name = true, ""
+		return nil
+	case "false":
+		*d.on, *d.name = false, ""
+		return nil
+	}
+	for _, c := range demoCases {
+		if value == c {
+			*d.on, *d.name = true, value
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown demo case %q: use --demo, or --demo=%s", value,
+		strings.Join(demoCases, ", --demo="))
+}
+
+// IsBoolFlag lets `--demo` stand alone.
+func (d demoFlag) IsBoolFlag() bool { return true }
+
 // options holds the parsed command line.
 type options struct {
-	demo   bool
-	check  bool
-	report bool
+	demo bool
+	// demoCase is the --demo=<case> picked, empty for the sample tailnet.
+	demoCase string
+	check    bool
+	report   bool
 	// probeIssuer adds the OIDC issuer's reachability to --check, the one
 	// network request --check can make.
 	probeIssuer bool
@@ -66,8 +118,10 @@ func parseFlags(args []string, out *os.File) (options, error) {
 	var opts options
 	fs := flag.NewFlagSet(toolName, flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.BoolVar(&opts.demo, "demo", false,
-		"run against a fake node and control plane on a sample tailnet, without reading this host")
+	fs.Var(demoFlag{on: &opts.demo, name: &opts.demoCase}, "demo",
+		"run against a fake node and control plane on a sample tailnet, without reading this "+
+			"host; --demo="+demoNodeOnly+" is a machine that is only a node of a "+
+			"control plane elsewhere")
 	fs.BoolVar(&opts.check, "check", false,
 		"read the node and the control plane once, print the summary as JSON and exit "+
 			"(no UI, nothing is changed, no address, name or URL of this host)")
@@ -197,6 +251,11 @@ func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 		// A browser login in the demo completes by itself a few reads after
 		// it starts, so the node screen shows it flip without a browser.
 		fake.CompleteLoginAfter(4)
+		// Once "confirmed", it takes tailscaled a few reads to come up, as it
+		// does on a real machine: the node screen waits instead of calling
+		// the login expired (issue #20).
+		fake.SetConfirmPhases(tailscale.StateNeedsLogin, tailscale.StateNoState,
+			tailscale.StateStarting)
 		return fake, nil
 	}
 	return tailscale.New(cfg.SudoPrefix())
@@ -207,7 +266,11 @@ func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 // screens explain how to install it on.
 func pickControlPlane(cfg config.Config, opts options) headscale.Backend {
 	if opts.demo {
-		return headscale.NewFake()
+		fake := headscale.NewFake()
+		if opts.demoCase == demoNodeOnly {
+			fake.SetAbsent()
+		}
+		return fake
 	}
 	return headscale.New(cfg.SudoPrefix())
 }
