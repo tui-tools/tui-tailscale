@@ -163,44 +163,62 @@
   ],
   "install": {
     "repo_url": "https://pkgs.tui.tools",
-    "source": {
-      "available": true,
-      "command": "git clone https://github.com/tui-tools/tui-tailscale\ncd tui-tailscale && make demo",
-      "url": "https://github.com/tui-tools/tui-tailscale"
-    },
     "pacman": {
-      "available": false,
+      "available": true,
       "package": "tui-tailscale",
       "repo": "tui-tools",
       "requires_repo_setup": true,
       "command": "sudo pacman -S tui-tailscale",
       "url": "https://pkgs.tui.tools/arch",
-      "note": "Available once the first release lands in pkgs.tui.tools."
+      "note": "Upgrades then arrive with the rest of your system updates."
+    },
+    "aur": {
+      "available": false,
+      "package": "tui-tailscale-bin",
+      "repo": "aur",
+      "command": "paru -S tui-tailscale-bin",
+      "url": "https://aur.archlinux.org/packages/tui-tailscale-bin",
+      "note": "The -bin package installs the released static binary."
     },
     "apt": {
-      "available": false,
+      "available": true,
       "package": "tui-tailscale",
       "repo": "tui-tools",
       "requires_repo_setup": true,
       "command": "sudo apt install tui-tailscale",
       "url": "https://pkgs.tui.tools/deb",
-      "note": "Available once the first release lands in pkgs.tui.tools."
+      "note": "Upgrades then arrive with the rest of your system updates."
     },
     "dnf": {
-      "available": false,
+      "available": true,
       "package": "tui-tailscale",
       "repo": "tui-tools",
       "requires_repo_setup": true,
       "command": "sudo dnf install tui-tailscale",
       "url": "https://pkgs.tui.tools/rpm",
-      "note": "Available once the first release lands in pkgs.tui.tools."
+      "note": "Upgrades then arrive with the rest of your system updates."
+    },
+    "zypper": {
+      "available": false,
+      "package": "tui-tailscale",
+      "repo": "tui-tools",
+      "requires_repo_setup": true,
+      "command": "sudo zypper install tui-tailscale",
+      "url": "https://pkgs.tui.tools/rpm",
+      "note": "The rpm repository is shared with dnf; zypper support is not tested yet."
     },
     "binary": {
-      "available": false,
+      "available": true,
       "pattern": "tui-tailscale_{version}_linux_{arch}.tar.gz",
       "command": "curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v{version}/tui-tailscale_{version}_linux_{arch}.tar.gz | tar -xz tui-tailscale\nsudo install -m0755 tui-tailscale /usr/local/bin/tui-tailscale",
       "url": "https://github.com/tui-tools/tui-tailscale/releases",
-      "note": "Available once v0.1.0 is tagged."
+      "note": "One static binary. Verify it against checksums.txt from the same release."
+    },
+    "source": {
+      "available": true,
+      "command": "git clone https://github.com/tui-tools/tui-tailscale\ncd tui-tailscale && make build\nsudo install -m0755 bin/tui-tailscale /usr/local/bin/tui-tailscale",
+      "url": "https://github.com/tui-tools/tui-tailscale",
+      "note": "Needs Go 1.27 or newer."
     }
   },
   "security": {
@@ -210,7 +228,7 @@
     "no_network": false,
     "no_network_note": "No connection of its own. On demand, previewed: the installs (i) fetch Tailscale's repository files or the tui-tools key (pinned fingerprint); O and --check --probe-issuer fetch the IdP's public discovery document, unprivileged.",
     "static_binary": true,
-    "signed_releases": false,
+    "signed_releases": true,
     "config_paths": [
       "/etc/tui-tailscale/config.toml",
       "~/.config/tui-tailscale/config.toml"
@@ -233,6 +251,5 @@
     "control-plane",
     "exit-node",
     "subnet-router"
-  ],
-  "unreleased": true
+  ]
 }
