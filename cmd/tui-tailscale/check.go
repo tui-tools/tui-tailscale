@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/tui-tools/tui-kit/compat"
+	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
 // checkTimeout bounds the whole read.
 const checkTimeout = 30 * time.Second
 
-// checkReport is what --check prints: one read of the node, reduced to the
-// facts a script or a support answer needs.
+// checkReport is what --check prints: one read of the node and of the control
+// plane on this host, reduced to the facts a script or a support answer needs.
 //
 // PRIVACY: this block is meant to be pasted into scripts and issues, so it
 // carries no address, no name and no URL of this host or its tailnet. The
@@ -41,8 +42,13 @@ type checkReport struct {
 	// is not: the commands `i` would run, for the detected distribution.
 	Install *installSummary `json:"install,omitempty"`
 
-	// Compat is what the version probe found. It is a list, like every tool's
-	// in the family, so the lab's harvest reads one shape.
+	// Headscale is the control plane on this host; see hsSummary for what it
+	// prints and what it deliberately does not.
+	Headscale hsSummary `json:"headscale"`
+
+	// Compat is what the version probe found, one entry per backend: the
+	// tailscale client and headscale. It is a list, like every tool's in the
+	// family, so the lab's harvest reads one shape.
 	Compat []compat.Result `json:"compat"`
 }
 
@@ -112,9 +118,22 @@ type installSummary struct {
 	Commands []string `json:"commands"`
 }
 
+// checkOptions are the --check switches beyond the plain read.
+type checkOptions struct {
+	// probeIssuer asks for the issuer's discovery document to be fetched
+	// from this machine, the one network request --check can make.
+	probeIssuer bool
+}
+
 // runCheck reads the state once and prints the reduced summary as JSON.
-func runCheck(ctx context.Context, backend tailscale.Backend,
-	probed compat.Result, out io.Writer) error {
+func runCheck(ctx context.Context, backend tailscale.Backend, hs headscale.Backend,
+	probed []compat.Result, out io.Writer) error {
+	return runCheckWith(ctx, backend, hs, probed, out, checkOptions{})
+}
+
+// runCheckWith is runCheck with the optional switches.
+func runCheckWith(ctx context.Context, backend tailscale.Backend, hs headscale.Backend,
+	probed []compat.Result, out io.Writer, opts checkOptions) error {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
@@ -122,7 +141,14 @@ func runCheck(ctx context.Context, backend tailscale.Backend,
 	if err != nil {
 		return err
 	}
+	hsState, err := hs.Load(ctx)
+	if err != nil {
+		return err
+	}
 
+	if probed == nil {
+		probed = []compat.Result{}
+	}
 	report := checkReport{
 		Tool:      toolName,
 		Version:   version,
@@ -130,7 +156,8 @@ func runCheck(ctx context.Context, backend tailscale.Backend,
 		Describe:  backend.Describe(),
 		LoginURL:  state.Node.AuthURL,
 		Tailscale: summariseNode(state),
-		Compat:    compatList(probed),
+		Headscale: summariseHS(hsState, time.Now()),
+		Compat:    probed,
 	}
 	if !state.Installed {
 		report.Install = &installSummary{
@@ -139,19 +166,15 @@ func runCheck(ctx context.Context, backend tailscale.Backend,
 			Commands: tailscale.InstallInstructions(state.Distro),
 		}
 	}
+	if readiness := report.Headscale.ControlPlane.OIDCReadiness; readiness != nil &&
+		opts.probeIssuer {
+		reachable := probeIssuer(ctx, hs, hsState.ControlPlane.OIDC.Issuer)
+		readiness.IssuerReachable = &reachable
+	}
 
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(report)
-}
-
-// compatList is the probe as the one-entry list --check carries, empty when
-// nothing was probed (--demo).
-func compatList(r compat.Result) []compat.Result {
-	if r.Backend == "" {
-		return []compat.Result{}
-	}
-	return []compat.Result{r}
 }
 
 // summariseNode reduces the state to counts and booleans.

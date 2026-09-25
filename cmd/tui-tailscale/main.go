@@ -1,17 +1,17 @@
-// Command tui-tailscale manages this host as a node of a tailnet, from the
-// terminal: the `tailscale` client, whichever control plane it answers to —
-// Tailscale's own or a self-hosted Headscale. It shows the node (state, login
-// server, addresses, the settings that decide what it routes) and the peers
-// it sees, and it joins, reconfigures, disconnects and logs out.
+// Command tui-tailscale manages both ends of a self-hosted Tailscale from the
+// terminal. The node end is this host as a member of a tailnet, through the
+// `tailscale` client, whichever control plane it answers to — Tailscale's own
+// or a self-hosted Headscale: the node (state, login server, addresses, the
+// settings that decide what it routes) and the peers it sees, joined,
+// reconfigured, disconnected and logged out. The control-plane end is a
+// Headscale on this host: its users, nodes and pre-auth keys, the server and
+// identity-provider settings in its config.yaml, the unit that runs it and
+// the ownership of its files.
 //
-// It manages as well as reads. Every change — a join, one setting, down, up,
-// logout, the companion install — is shown as the exact command line first
-// and applied only after it is confirmed. There is one place a process is
-// ever started, internal/tailscale, so the command the dialog showed is the
-// command that runs.
-//
-// tui-vpn is the control-plane side of the same network; this tool is the
-// node side, on any machine.
+// It manages as well as reads. Every change is shown as the exact command
+// line first and applied only after it is confirmed. A process is started
+// from exactly two places, internal/tailscale and internal/headscale — one
+// per backend — so the command the dialog showed is the command that runs.
 package main
 
 import (
@@ -21,8 +21,10 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/config"
 	"github.com/tui-tools/tui-kit/theme"
+	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
@@ -45,9 +47,12 @@ func defaults() map[string]string {
 
 // options holds the parsed command line.
 type options struct {
-	demo        bool
-	check       bool
-	report      bool
+	demo   bool
+	check  bool
+	report bool
+	// probeIssuer adds the OIDC issuer's reachability to --check, the one
+	// network request --check can make.
+	probeIssuer bool
 	themePath   string
 	sudo        string
 	showVersion bool
@@ -62,10 +67,13 @@ func parseFlags(args []string, out *os.File) (options, error) {
 	fs := flag.NewFlagSet(toolName, flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.BoolVar(&opts.demo, "demo", false,
-		"run against a fake node on a sample tailnet, without reading this host")
+		"run against a fake node and control plane on a sample tailnet, without reading this host")
 	fs.BoolVar(&opts.check, "check", false,
-		"read the node once, print the summary as JSON and exit "+
+		"read the node and the control plane once, print the summary as JSON and exit "+
 			"(no UI, nothing is changed, no address, name or URL of this host)")
+	fs.BoolVar(&opts.probeIssuer, "probe-issuer", false,
+		"with --check: fetch the OIDC issuer's discovery document from this machine and "+
+			"report whether it answered (the only network request --check makes)")
 	fs.BoolVar(&opts.report, "report", false, reportUsage)
 	fs.StringVar(&opts.themePath, "theme", "",
 		"path to an Omarchy-style colors.toml (overrides the config file)")
@@ -73,7 +81,8 @@ func parseFlags(args []string, out *os.File) (options, error) {
 		"privilege escalation prefix, e.g. \"sudo -n\" or \"\" to disable")
 	fs.BoolVar(&opts.showVersion, "version", false, "print the version and exit")
 	fs.Usage = func() {
-		_, _ = fmt.Fprintf(out, "tui-tailscale — this host as a tailnet node, from the terminal\n\n"+
+		_, _ = fmt.Fprintf(out, "tui-tailscale — self-hosted Tailscale from the terminal: "+
+			"the control plane and this node\n\n"+
 			"Usage:\n  tui-tailscale [flags]\n\nFlags:\n")
 		fs.PrintDefaults()
 		_, _ = fmt.Fprintf(out, "\nConfiguration is read from %s, then %s, "+
@@ -144,15 +153,20 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	hs := pickControlPlane(cfg, opts)
 
 	// --check is the other non-interactive path: it reads once and prints, and
 	// never starts a terminal program.
 	if opts.check {
-		return runCheck(context.Background(), backend, backendCompat, os.Stdout)
+		return runCheckWith(context.Background(), backend, hs, backendCompat, os.Stdout,
+			checkOptions{probeIssuer: opts.probeIssuer})
 	}
 
-	program := tea.NewProgram(newApp(backend, theme.New(), backendCompat),
-		tea.WithAltScreen())
+	model := newApp(backend, hs, theme.New(), backendCompat)
+	// After a change the versions are probed again, so an install shows its
+	// version in the header without a restart.
+	model.probe = func() []compat.Result { return probeCompat(context.Background(), opts.demo) }
+	program := tea.NewProgram(model, tea.WithAltScreen())
 	_, err = program.Run()
 	return err
 }
@@ -170,10 +184,20 @@ func applyOverrides(cfg *config.Config, opts options) {
 	}
 }
 
-// pickBackend returns the demo backend or the real one.
+// pickBackend returns the demo node backend or the real one.
 func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 	if opts.demo {
 		return tailscale.NewFake(), nil
 	}
 	return tailscale.New(cfg.SudoPrefix())
+}
+
+// pickControlPlane returns the demo control plane or the real one. The real
+// one cannot fail: a host without headscale is a host the control-plane
+// screens explain how to install it on.
+func pickControlPlane(cfg config.Config, opts options) headscale.Backend {
+	if opts.demo {
+		return headscale.NewFake()
+	}
+	return headscale.New(cfg.SudoPrefix())
 }

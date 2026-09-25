@@ -124,6 +124,17 @@ func (r *Real) runnerFor(bin string) (*runner.Runner, error) {
 	return run, nil
 }
 
+// Reprobe drops every resolved runner and every remembered miss, so the next
+// read resolves the binaries again. It is what makes an install take effect
+// without restarting the tool: runners are resolved on first use and cached,
+// and a binary that was missing then stays missing in the cache.
+func (r *Real) Reprobe() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runners = map[string]*runner.Runner{}
+	r.missing = map[string]error{}
+}
+
 // Preview renders the command the way its binary's runner would, so the
 // privilege prefix in the dialog is the real one.
 func (r *Real) Preview(cmd runner.Command) string {

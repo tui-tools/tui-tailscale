@@ -31,31 +31,6 @@ import (
 	"github.com/tui-tools/tui-kit/runner"
 )
 
-// Screen is one of the views the tool is made of: the node itself, and the
-// rest of the tailnet as this node sees it. The tab bar, the digit keys and
-// the help screen are all generated from this list, so the control plane's
-// screens (its users, nodes and pre-auth keys, driven from a sibling
-// internal/headscale package) slot in by adding constants before ScreenCount.
-type Screen int
-
-const (
-	// ScreenNode shows this host: state, login server, addresses, prefs.
-	ScreenNode Screen = iota
-	// ScreenPeers lists the other nodes of the tailnet.
-	ScreenPeers
-	// ScreenCount is the number of screens: it drives the tab bar and the
-	// per-screen cursor arrays.
-	ScreenCount
-)
-
-// Title is the tab label.
-func (s Screen) Title() string {
-	if s == ScreenPeers {
-		return "peers"
-	}
-	return "node"
-}
-
 // The backend states `tailscale status --json` reports, as ipn.State names
 // them. Only the ones the UI treats differently are named here.
 const (
@@ -797,4 +772,8 @@ type Backend interface {
 	Preview(cmd runner.Command) string
 	// Run executes a previously previewed command.
 	Run(ctx context.Context, cmd runner.Command) (string, error)
+	// Reprobe forgets which binaries were found and how to run them, so the
+	// next read detects them again: after an install, a binary that was
+	// missing at start-up is there.
+	Reprobe()
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/tui-tools/tui-kit/config"
 	"github.com/tui-tools/tui-kit/report"
 	"github.com/tui-tools/tui-kit/theme"
+	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
@@ -19,10 +20,10 @@ import (
 // terminal, where the binary came from — is collected by the kit, so the whole
 // family answers --report in the same shape. What this tool adds is the part
 // only it knows: the client's version, whether tailscaled answers, and the
-// state it reports.
+// state it reports; headscale's version, and what systemd says about its unit.
 //
 // PRIVACY: it never prints the login server, an address, the node's name or
-// the tailnet's. It reads nothing privileged, and it runs before the backend
+// the tailnet's, and nothing of headscale's configuration, users or nodes. It reads nothing privileged, and it runs before the backend
 // is required, so a host with nothing installed still produces a usable block.
 func runReport(cfg config.Config, opts options, out io.Writer) error {
 	palette, _ := theme.ResolvePalette()
@@ -30,7 +31,9 @@ func runReport(cfg config.Config, opts options, out io.Writer) error {
 	// The same probe the header uses. There is one version probe in a tool and
 	// this is it — a report that probed separately could disagree with the
 	// header the user is looking at.
-	backendCompat := probeCompat(context.Background(), opts.demo)
+	probed := probeCompat(context.Background(), opts.demo)
+	backendCompat := compatFor(probed, backendName)
+	hsCompat := compatFor(probed, backendHeadscale)
 
 	var backendError string
 	if _, err := pickBackend(cfg, opts); err != nil {
@@ -52,7 +55,7 @@ func runReport(cfg config.Config, opts options, out io.Writer) error {
 		// host's, so no host fact is probed under --demo.
 		info.Backend = "demo"
 		info.Extra = append(info.Extra,
-			report.Field{Key: "demo backend", Value: backendName})
+			report.Field{Key: "demo backend", Value: backendName + " + " + backendHeadscale})
 	} else {
 		facts := tailscale.HostFacts(context.Background())
 		info.Extra = append(info.Extra,
@@ -62,6 +65,13 @@ func runReport(cfg config.Config, opts options, out io.Writer) error {
 		if facts.BackendState != "" {
 			info.Extra = append(info.Extra,
 				report.Field{Key: "backend state", Value: facts.BackendState})
+		}
+		hsFacts := headscale.HostFacts(context.Background())
+		info.Extra = append(info.Extra, report.Field{Key: "headscale",
+			Value: installedLine(hsFacts.Present, hsCompat.Version)})
+		if hsFacts.Service != "" {
+			info.Extra = append(info.Extra,
+				report.Field{Key: "headscale unit", Value: hsFacts.Service})
 		}
 	}
 	if backendError != "" {

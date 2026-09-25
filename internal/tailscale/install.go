@@ -156,11 +156,18 @@ func buildInstall(d Distro) (Plan, error) {
 			enable,
 		}
 	case pkgmgr.ManagerPacman:
-		plan.Body = "tailscale is in Arch's own repositories: pacman installs it, then " +
-			"tailscaled is started."
+		// Arch has no supported way to install one package against a
+		// refreshed database without upgrading the rest (a bare -Sy is a
+		// partial upgrade), and a stale database on a fresh image points at
+		// files the mirrors no longer carry. So the family's convention: -Syu,
+		// and the dialog says the machine is upgraded with it.
+		plan.Body = "tailscale is in Arch's own repositories. pacman refreshes the " +
+			"package database and installs it — and, because Arch supports no partial " +
+			"upgrade, upgrades the rest of the machine with it (-Syu). Then tailscaled " +
+			"is started."
 		plan.Steps = []runner.Command{
-			{Argv: []string{"pacman", "-S", "--needed", "--noconfirm", "tailscale"},
-				Description: "Install tailscale"},
+			{Argv: []string{"pacman", "-Syu", "--needed", "--noconfirm", "tailscale"},
+				Description: "Upgrade the system and install tailscale"},
 			enable,
 		}
 	default:

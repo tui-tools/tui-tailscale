@@ -7,10 +7,12 @@
 # $TUI_LAB_BIN (default: tui-tailscale on PATH).
 #
 # What a smoke test proves is that the tool reads the machine's *real* subject
-# and agrees with the machine's own tooling. Nothing here changes the node: the
-# assertions are reads (--report, --check), compared with what `tailscale`
-# itself says. A guest without tailscale is a real case too — the tool has to
-# say so, and say how to install it on that distribution.
+# and agrees with the machine's own tooling. The subject has two ends: this
+# host as a node (`tailscale`) and the headscale control plane on it. Nothing
+# here changes either: the assertions are reads (--report, --check), compared
+# with what `tailscale`, `systemctl` and `stat` themselves say. A guest without
+# tailscale or without headscale is a real case too — the tool has to say so,
+# and say how to install it on that distribution.
 set -uo pipefail
 
 bin="${TUI_LAB_BIN:-tui-tailscale}"
@@ -92,9 +94,11 @@ check "check --demo counts the peer offering an exit node" \
   '"exitNodeOptions": 1'
 
 # A pending login's URL is the one URL --check prints (loginUrl, a one-time
-# registration link, not an address of the host), so its line is left out.
+# registration link, not an address of the host), so its line is left out, and
+# so are the two names the control-plane block prints on purpose: the OIDC
+# issuer's host and dns.base_domain, the tailnet's own naming.
 check "check --demo carries no URL, name or address" \
-  "$bin --demo --check | grep -v '\"loginUrl\":' | grep -cE '://|example|100\\.64\\.|fd7a:' || true" \
+  "$bin --demo --check | grep -vE '\"(loginUrl|oidcIssuer|baseDomain)\":' | grep -cE '://|example|100\\.64\\.|fd7a:' || true" \
   '^0$'
 
 # --- the check block, on this machine ---------------------------------------
@@ -156,9 +160,161 @@ else
     pacman)
       check "check gives the pacman install" \
         "$bin --check" \
-        'sudo pacman -S --needed --noconfirm tailscale'
+        'sudo pacman -Syu --needed --noconfirm tailscale'
       ;;
   esac
+fi
+
+# --- the control plane, under --demo ----------------------------------------
+#
+# The configuration read is what turned `oidc: yes/no` from a guess into a
+# fact, so the block that carries it is smoked here. Under --demo it is the
+# sample configuration; on a real host it is /etc/headscale/config.yaml.
+check "check --demo carries the control-plane block" \
+  "$bin --demo --check" \
+  '"controlPlane"'
+
+check "check --demo reports the control plane as OIDC-configured" \
+  "$bin --demo --check" \
+  '"oidcConfigured": true'
+
+# The server_url is answered as two booleans rather than printed: those are the
+# two ways an otherwise healthy setup fails, and neither names this host.
+check "check --demo answers the server_url questions" \
+  "$bin --demo --check" \
+  '"serverUrlHttps": true'
+
+check "check --demo says whether the server_url is loopback" \
+  "$bin --demo --check" \
+  '"serverUrlLoopback": false'
+
+check "check --demo reduces the OIDC issuer to its host" \
+  "$bin --demo --check" \
+  '"oidcIssuer": "idp\.example\.com"'
+
+# Whether the unit starts at boot is the half of "is it running" a fresh
+# install gets wrong: the package leaves it disabled.
+check "check --demo says whether the unit starts at boot" \
+  "$bin --demo --check" \
+  '"serviceEnabled": "disabled"'
+
+# The ownership check: the demo's noise key is root's, the way a root-run
+# `headscale configtest` leaves it, and --check names the path.
+check "check --demo names a state file the service account does not own" \
+  "$bin --demo --check" \
+  '"path": "/var/lib/headscale/noise_private\.key"'
+
+# The transport, read from the TLS settings and the bind: the demo sits behind
+# a reverse proxy, with a MagicDNS domain outside its server_url host.
+check "check --demo names the transport" \
+  "$bin --demo --check" \
+  '"transport": "reverse-proxy"'
+
+check "check --demo reports the base domain without a conflict" \
+  "$bin --demo --check" \
+  '"baseDomainConflict": false'
+
+check "check --demo keeps the inference as a separate field" \
+  "$bin --demo --check" \
+  '"oidcInferred":'
+
+# The whole point of writing the secret to its own file: --check can say that
+# one is set and has no field that could carry the value.
+check "check --demo reports the secret as set, never its value" \
+  "$bin --demo --check" \
+  '"oidcClientSecretSet": true'
+
+check "check --demo has no field that could hold a secret" \
+  "$bin --demo --check | grep -icE '\"(oidc)?[a-z]*clientsecret\": \"' || true" \
+  '^0$'
+
+# A subnet router's routes stay pending until approved; --check counts them per
+# node and never prints the networks. The demo's office-router has one.
+check "check --demo counts the demo router's pending route" \
+  "$bin --demo --check" \
+  '"pending": 1'
+
+check "check --demo prints no route" \
+  "$bin --demo --check | grep -cE '0\.0\.0\.0/0|198\.51\.100\.|192\.0\.2\.' || true" \
+  '^0$'
+
+# The readiness line, as facts: the demo's unit runs but is disabled, so that
+# is the next step.
+check "check --demo names the next missing step" \
+  "$bin --demo --check" \
+  '"next": "unit"'
+
+# --- the control plane, on this machine ---------------------------------------
+if command -v headscale >/dev/null 2>&1; then
+  check "check says headscale is present" \
+    "sudo -n $bin --check" \
+    '"present": true'
+
+  # The version the tool reads has to be the one headscale prints.
+  hs_version=$(headscale version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  check "check reads the version headscale prints" \
+    "sudo -n $bin --check" \
+    "\"version\": \"${hs_version:-none}\""
+
+  # The unit's facts have to agree with systemd's own answers.
+  enabled=$(systemctl is-enabled headscale 2>/dev/null | head -1)
+  check "check agrees with systemctl about the unit starting at boot" \
+    "sudo -n $bin --check" \
+    "\"serviceEnabled\": \"${enabled:-unknown}\""
+  active=$(systemctl is-active headscale 2>/dev/null | head -1)
+  check "check agrees with systemctl about the unit running" \
+    "sudo -n $bin --check" \
+    "\"serviceState\": \"${active:-unknown}\""
+
+  check "check read the configuration" \
+    "sudo -n $bin --check" \
+    '"readable": true'
+
+  check "check reads a transport from the real configuration" \
+    "sudo -n $bin --check" \
+    '"transport": "(plain-http|letsencrypt|own-cert|reverse-proxy)"'
+
+  # The check has to have run (stat reached the state directory through
+  # sudo -n) and agree with stat about the directory.
+  check "check ran the ownership check on the real state directory" \
+    "sudo -n $bin --check" \
+    '"ownershipChecked": true'
+  owner=$(sudo -n stat -c %U:%G /var/lib/headscale 2>/dev/null)
+  account=$(systemctl show headscale -p User --value 2>/dev/null)
+  if [[ -n $owner && -n $account && ${owner%%:*} != "$account" ]]; then
+    check "check reports the state directory owned by the wrong account" \
+      "sudo -n $bin --check" \
+      '"path": "/var/lib/headscale"'
+  elif [[ -n $owner ]]; then
+    check "check does not flag a state directory the service owns" \
+      "sudo -n $bin --check | grep -c '\"path\": \"/var/lib/headscale\"' || true" \
+      '^0$'
+  fi
+
+  # With the unit active the lists are read, and the node count is headscale's.
+  if [[ $active == active ]]; then
+    nodes=$(sudo -n headscale nodes list --output json 2>/dev/null | grep -cE '"(machine_key|machineKey)"')
+    check "check counts the nodes headscale lists" \
+      "sudo -n $bin --check" \
+      "\"nodes\": ${nodes:-0},"
+  fi
+
+  check "check names the next missing step" \
+    "sudo -n $bin --check" \
+    '"next": "(server|unit|identity|first-node|routes|ready)"'
+
+  check "check carries no URL of this control plane" \
+    "sudo -n $bin --check | grep -v '\"loginUrl\":' | grep -c '://' || true" \
+    '^0$'
+else
+  # No headscale: the tool must say so, give the next step, and this
+  # distribution's commands from the tui-tools repository.
+  check "check says headscale is not installed" \
+    "$bin --check" \
+    '"next": "install"'
+  check "check gives the headscale install from the tui-tools repository" \
+    "$bin --check" \
+    '(apt-get install -y headscale|dnf install -y headscale|pacman -Syu --needed --noconfirm tui-tools/headscale)'
 fi
 
 # --- compatibility evidence ------------------------------------------------
@@ -167,7 +323,8 @@ fi
 # one line per backend whose version the tool itself probed, printed behind
 # `compat-result:` so it survives the trip out of the guest in the lab's log,
 # and appended to $TUI_COMPAT_RESULTS as well for a run outside the lab.
-# --check's compat block is a list, the same shape across the family.
+# --check's compat block is a list, the same shape across the family, with one
+# entry per backend: the tailscale client and headscale.
 TOOL=tui-tailscale
 record_compat() {
   local report="$1" outcome="$2" distro today backend version line
@@ -194,9 +351,9 @@ record_compat() {
 
 outcome=pass
 [[ $fail -eq 0 ]] || outcome=fail
-# The probe is unprivileged, so --check as the lab user carries the same
-# version the escalated run would; sudo -n is tried first only because it is
-# what the rest of the family does.
+# The probes are unprivileged, so --check as the lab user carries the same
+# versions the escalated run would; sudo -n is tried first because the
+# control plane's read needs it.
 report=$(sudo -n "$bin" --check 2>/dev/null || "$bin" --check 2>/dev/null)
 record_compat "$report" "$outcome"
 

@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/tui-tools/tui-kit/compat"
+	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
 
 func TestRunCheckDemo(t *testing.T) {
 	var out strings.Builder
-	err := runCheck(context.Background(), tailscale.NewFake(),
-		compat.Result{Backend: backendName, Version: "1.98.4"}, &out)
+	err := runCheck(context.Background(), tailscale.NewFake(), headscale.NewFake(),
+		[]compat.Result{{Backend: backendName, Version: "1.98.4"}}, &out)
 	if err != nil {
 		t.Fatalf("runCheck: %v", err)
 	}
@@ -44,8 +45,21 @@ func TestRunCheckDemo(t *testing.T) {
 		t.Errorf("compat = %+v", report.Compat)
 	}
 	// The privacy promise: no address, name or URL of the node or its tailnet.
+	// The control plane's block prints two names on purpose — the issuer's
+	// host and dns.base_domain, see cp_check.go — so the node's half is
+	// checked on its own, and the whole report for URLs and addresses.
+	node, err := json.Marshal(report.Tailscale)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, leak := range []string{"://", "example-node", "100.64.", "fd7a:", "example.com",
 		"192.0.2."} {
+		if strings.Contains(string(node), leak) {
+			t.Errorf("--check's node block carries %q:\n%s", leak, node)
+		}
+	}
+	for _, leak := range []string{"://", "example-node", "office-router", "100.64.", "fd7a:",
+		"192.0.2.", "198.51.100.", "user@example.com"} {
 		if strings.Contains(out.String(), leak) {
 			t.Errorf("--check carries %q:\n%s", leak, out.String())
 		}
@@ -54,7 +68,8 @@ func TestRunCheckDemo(t *testing.T) {
 
 func TestRunCheckNotInstalled(t *testing.T) {
 	var out strings.Builder
-	err := runCheck(context.Background(), notInstalled{tailscale.NewFake()}, compat.Result{}, &out)
+	err := runCheck(context.Background(), notInstalled{tailscale.NewFake()}, headscale.NewFake(),
+		nil, &out)
 	if err != nil {
 		t.Fatalf("runCheck: %v", err)
 	}
@@ -93,7 +108,7 @@ func TestRunCheckPendingLogin(t *testing.T) {
 		}
 	}
 	var out strings.Builder
-	if err := runCheck(ctx, fake, compat.Result{}, &out); err != nil {
+	if err := runCheck(ctx, fake, headscale.NewFake(), nil, &out); err != nil {
 		t.Fatalf("runCheck: %v", err)
 	}
 	var report map[string]any
