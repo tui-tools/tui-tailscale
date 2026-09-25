@@ -175,6 +175,17 @@ type app struct {
 	// the retry was spent.
 	settling      bool
 	settleRetried bool
+
+	// loginURLShown is the pending login URL the status line carries, so a
+	// later read can replace it once the login completes or expires instead
+	// of leaving a dead link there (issue #10).
+	loginURLShown string
+	// loginPolling reports that a re-read is scheduled because a login is
+	// pending; loginPolls counts the re-reads spent on the current URL,
+	// loginPollURL, so the polling stops after loginPollLimit.
+	loginPolling bool
+	loginPolls   int
+	loginPollURL string
 }
 
 // settleDelay is how long the one automatic re-read after a change waits.
@@ -182,6 +193,20 @@ var settleDelay = time.Second
 
 // settleMsg asks for the automatic re-read after a change.
 type settleMsg struct{}
+
+// loginPollDelay is how long the re-read waits while a login is pending.
+// headscale takes up to half a minute after the browser confirms to finish
+// /machine/register, so the node flips from "logged out" to running a while
+// after the user is done; re-reading every few seconds shows it flip without
+// anyone pressing r.
+var loginPollDelay = 3 * time.Second
+
+// loginPollLimit bounds the re-reads spent on one pending login URL: about
+// three minutes at loginPollDelay, after which r still re-reads by hand.
+const loginPollLimit = 60
+
+// loginPollMsg asks for the re-read while a login is pending.
+type loginPollMsg struct{}
 
 // loadedMsg carries the result of a read: the node and the control plane,
 // read together so the two halves of the screen never disagree about when.
@@ -374,6 +399,10 @@ func (a *app) runPlan(plan tailscale.Plan) tea.Cmd {
 func (a *app) setStatus(kind ui.StatusKind, message string) {
 	a.status = message
 	a.statusKind = kind
+	if message != a.loginURLShown {
+		// Another message took the line: there is no URL left to follow.
+		a.loginURLShown = ""
+	}
 }
 
 // setStatusf records a formatted message for the status line.
@@ -408,13 +437,22 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			retry = a.settleRead()
 		}
 		a.clampCursor()
-		return a, retry
+		a.followLogin()
+		return a, tea.Batch(retry, a.pollLogin())
 
 	case settleMsg:
 		if !a.settling {
 			return a, nil
 		}
 		a.loading = true
+		return a, a.load()
+
+	case loginPollMsg:
+		a.loginPolling = false
+		if a.state.Node.AuthURL == "" {
+			return a, nil
+		}
+		a.loginPolls++
 		return a, a.load()
 
 	case planRanMsg:
@@ -468,6 +506,7 @@ func (a *app) planResult(msg planRanMsg) {
 			// The status line carries the URL alone, so nothing but the URL is
 			// there to select; the notice prints it outside its frame.
 			a.setStatus(ui.StatusWarn, url)
+			a.loginURLShown = url
 			a.openNotice("Log in to finish joining",
 				"tailscale is waiting for a login. Open the URL below in a browser — on "+
 					"any machine — and log in (with a self-hosted control plane, this is "+
@@ -1112,3 +1151,77 @@ func (a *app) rowCount() int {
 	}
 	return 0
 }
+
+// --- the pending login (issue #10) --------------------------------------------
+
+// followLogin keeps the status line honest about a login it announced. While
+// the status line carries a pending login URL, each read either finds the same
+// URL (nothing to say), a new one (the line shows the new one), the node
+// logged in (the dead link is replaced by who joined), or no login pending at
+// all (the link expired, and the line says so). When the login completes while
+// its notice is still open, the notice closes: there is nothing left to open.
+func (a *app) followLogin() {
+	shown := a.loginURLShown
+	if shown == "" {
+		return
+	}
+	n := a.state.Node
+	switch {
+	case n.AuthURL == shown:
+		return
+	case n.AuthURL != "":
+		a.setStatus(ui.StatusWarn, n.AuthURL)
+		a.loginURLShown = n.AuthURL
+		if a.mode == modeNotice && a.notice.copyable == shown {
+			a.notice.copyable = n.AuthURL
+		}
+		return
+	}
+	if a.mode == modeNotice && a.notice.copyable == shown {
+		a.mode = modeBrowse
+	}
+	if a.state.LoggedIn() && n.BackendState == tailscale.StateRunning {
+		a.setStatus(ui.StatusOK, joinedLine(n))
+		a.loginCompleted()
+		return
+	}
+	a.setStatus(ui.StatusWarn, "the pending login expired or was cancelled — j starts a new one")
+}
+
+// joinedLine says who joined which tailnet, for the status line that replaces
+// a login URL once the login went through.
+func joinedLine(n tailscale.Node) string {
+	line := "joined"
+	if n.TailnetName != "" {
+		line += " " + n.TailnetName
+	}
+	if n.User != "" {
+		line += " as " + n.User
+	}
+	if len(n.IPs) > 0 {
+		line += " · " + n.IPs[0]
+	}
+	return line
+}
+
+// pollLogin schedules the next re-read while a login is pending, bounded per
+// URL: a new URL starts a new count, and no pending login resets it.
+func (a *app) pollLogin() tea.Cmd {
+	url := a.state.Node.AuthURL
+	if url == "" {
+		a.loginPolls, a.loginPollURL = 0, ""
+		return nil
+	}
+	if url != a.loginPollURL {
+		a.loginPolls, a.loginPollURL = 0, url
+	}
+	if a.loginPolling || a.loginPolls >= loginPollLimit {
+		return nil
+	}
+	a.loginPolling = true
+	return tea.Tick(loginPollDelay, func(time.Time) tea.Msg { return loginPollMsg{} })
+}
+
+// loginCompleted is the hook a completed browser login runs: the join form's
+// answers, when this session collected them, are offered as a join profile.
+func (a *app) loginCompleted() {}

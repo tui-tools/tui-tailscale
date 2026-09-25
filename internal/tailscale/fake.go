@@ -32,6 +32,10 @@ type Fake struct {
 	// while it is still coming up after an install.
 	absent, detected bool
 	refuse           int
+	// completeAfter is how many reads a pending browser login lasts before
+	// the demo "logs in" on its own, 0 for never; pendingReads counts them
+	// down for the login pending now.
+	completeAfter, pendingReads int
 }
 
 // DemoLoginServer is the control plane the demo node is joined to.
@@ -80,10 +84,55 @@ func (f *Fake) Reprobe() {
 	f.detected = !f.absent
 }
 
+// CompleteLoginAfter makes a pending browser login complete by itself after n
+// reads, the way it does once somebody opens the URL: --demo uses it so the
+// node screen shows the login flip from pending to running (issue #10).
+func (f *Fake) CompleteLoginAfter(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.completeAfter = n
+}
+
+// CompleteLogin finishes a pending browser login now, as the browser would.
+func (f *Fake) CompleteLogin() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.completeLogin()
+}
+
+// completeLogin logs the pending node in with the settings it joined with.
+func (f *Fake) completeLogin() {
+	if f.state.Node.AuthURL == "" {
+		return
+	}
+	node := demoState().Node
+	if h := f.state.Prefs.Hostname; h != "" {
+		node.HostName = h
+		node.DNSName = h + "." + node.MagicDNSSuffix
+	}
+	f.state.Node = node
+	f.state.Peers = demoState().Peers
+	f.state.Prefs.LoggedOut = false
+}
+
+// ExpireLogin drops a pending browser login without logging in, the way a
+// registration the control plane forgot looks from the node.
+func (f *Fake) ExpireLogin() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.Node.AuthURL = ""
+}
+
 // Load returns a copy of the demo state.
 func (f *Fake) Load(_ context.Context) (State, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.state.Node.AuthURL != "" && f.completeAfter > 0 {
+		f.pendingReads--
+		if f.pendingReads <= 0 {
+			f.completeLogin()
+		}
+	}
 	if !f.detected {
 		return State{Distro: f.state.Distro}, nil
 	}
@@ -240,6 +289,7 @@ func (f *Fake) applyJoin(flags map[string]string) (string, error) {
 		f.state.Node = Node{BackendState: StateNeedsLogin, AuthURL: url,
 			Version: f.state.Node.Version}
 		f.state.Peers = nil
+		f.pendingReads = f.completeAfter
 		return "\nTo authenticate, visit:\n\n\t" + url + "\n\n",
 			fmt.Errorf("timeout waiting for Tailscale service to enter a Running state; " +
 				"check health with \"tailscale status\"")

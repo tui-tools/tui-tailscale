@@ -187,7 +187,11 @@ func applyOverrides(cfg *config.Config, opts options) {
 // pickBackend returns the demo node backend or the real one.
 func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 	if opts.demo {
-		return tailscale.NewFake(), nil
+		fake := tailscale.NewFake()
+		// A browser login in the demo completes by itself a few reads after
+		// it starts, so the node screen shows it flip without a browser.
+		fake.CompleteLoginAfter(4)
+		return fake, nil
 	}
 	return tailscale.New(cfg.SudoPrefix())
 }
