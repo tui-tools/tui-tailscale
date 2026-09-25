@@ -366,6 +366,25 @@ func TestInstallAddsThePinnedRepositoryFirst(t *testing.T) {
 	}
 }
 
+// TestInstallRefreshesOnce: the kit's companion builder starts the apt install
+// with a refresh, and the repository setup already ends with one; the plan
+// runs it once.
+func TestInstallRefreshesOnce(t *testing.T) {
+	plan, err := BuildInstall(ubuntu(), RepoState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshes := 0
+	for _, s := range plan.Steps {
+		if strings.HasSuffix(s.String(), "apt-get update") {
+			refreshes++
+		}
+	}
+	if refreshes != 1 {
+		t.Errorf("%d refreshes in %q", refreshes, plan.Steps)
+	}
+}
+
 func TestInstallWithTheRepositoryConfigured(t *testing.T) {
 	cases := map[string]struct {
 		distro pkgmgr.Distro
