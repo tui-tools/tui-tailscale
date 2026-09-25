@@ -46,6 +46,10 @@ type checkReport struct {
 	// prints and what it deliberately does not.
 	Headscale hsSummary `json:"headscale"`
 
+	// JoinProfiles are the names of the join profiles saved for j, and only
+	// their names: what they hold names this host's infrastructure.
+	JoinProfiles []string `json:"joinProfiles"`
+
 	// Compat is what the version probe found, one entry per backend: the
 	// tailscale client and headscale. It is a list, like every tool's in the
 	// family, so the lab's harvest reads one shape.
@@ -76,6 +80,9 @@ type nodeSummary struct {
 	// HealthWarnings counts the client's own warnings; their text can name
 	// hosts, so it stays on the node screen.
 	HealthWarnings int `json:"healthWarnings"`
+	// LoginProfiles counts tailscale's own login profiles (`tailscale switch
+	// --list`); their accounts and tailnets are not printed.
+	LoginProfiles int `json:"loginProfiles"`
 
 	PrefsRead  bool         `json:"prefsRead"`
 	PrefsError string       `json:"prefsError,omitempty"`
@@ -123,6 +130,8 @@ type checkOptions struct {
 	// probeIssuer asks for the issuer's discovery document to be fetched
 	// from this machine, the one network request --check can make.
 	probeIssuer bool
+	// joinProfiles are the saved join profiles' names.
+	joinProfiles []string
 }
 
 // runCheck reads the state once and prints the reduced summary as JSON.
@@ -158,6 +167,11 @@ func runCheckWith(ctx context.Context, backend tailscale.Backend, hs headscale.B
 		Tailscale: summariseNode(state),
 		Headscale: summariseHS(hsState, time.Now()),
 		Compat:    probed,
+
+		JoinProfiles: opts.joinProfiles,
+	}
+	if report.JoinProfiles == nil {
+		report.JoinProfiles = []string{}
 	}
 	if !state.Installed {
 		report.Install = &installSummary{
@@ -192,6 +206,7 @@ func summariseNode(s tailscale.State) nodeSummary {
 		Online:           s.Node.Online,
 		MagicDNS:         s.Node.MagicDNS,
 		HealthWarnings:   len(s.Node.Health),
+		LoginProfiles:    len(s.LoginProfiles),
 		PrefsRead:        s.PrefsRead,
 		PrefsError:       s.PrefsError,
 	}

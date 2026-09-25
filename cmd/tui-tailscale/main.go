@@ -154,15 +154,17 @@ func run(args []string) error {
 		return err
 	}
 	hs := pickControlPlane(cfg, opts)
+	profiles := pickProfiles(opts)
 
 	// --check is the other non-interactive path: it reads once and prints, and
 	// never starts a terminal program.
 	if opts.check {
 		return runCheckWith(context.Background(), backend, hs, backendCompat, os.Stdout,
-			checkOptions{probeIssuer: opts.probeIssuer})
+			checkOptions{probeIssuer: opts.probeIssuer, joinProfiles: profiles.names()})
 	}
 
 	model := newApp(backend, hs, theme.New(), backendCompat)
+	model.profiles = profiles
 	// After a change the versions are probed again, so an install shows its
 	// version in the header without a restart.
 	model.probe = func() []compat.Result { return probeCompat(context.Background(), opts.demo) }
@@ -187,7 +189,11 @@ func applyOverrides(cfg *config.Config, opts options) {
 // pickBackend returns the demo node backend or the real one.
 func pickBackend(cfg config.Config, opts options) (tailscale.Backend, error) {
 	if opts.demo {
-		return tailscale.NewFake(), nil
+		fake := tailscale.NewFake()
+		// A browser login in the demo completes by itself a few reads after
+		// it starts, so the node screen shows it flip without a browser.
+		fake.CompleteLoginAfter(4)
+		return fake, nil
 	}
 	return tailscale.New(cfg.SudoPrefix())
 }
@@ -200,4 +206,14 @@ func pickControlPlane(cfg config.Config, opts options) headscale.Backend {
 		return headscale.NewFake()
 	}
 	return headscale.New(cfg.SudoPrefix())
+}
+
+// pickProfiles returns the demo's join profiles or the ones saved on this
+// machine: the machine-wide config file's and this user's.
+func pickProfiles(opts options) profileStore {
+	if opts.demo {
+		return demoProfileStore()
+	}
+	return loadProfileStore(config.SystemPathFor(toolName), config.UserPathFor(toolName),
+		os.Geteuid() == 0)
 }

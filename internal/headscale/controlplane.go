@@ -70,6 +70,8 @@ type ControlPlane struct {
 	// MagicDNS is dns.magic_dns, headscale's default true. With it on, a
 	// base domain is required.
 	MagicDNS bool `json:"magicDns"`
+	// DNS is the whole dns: section, which the dns screen shows and edits.
+	DNS DNSConfig `json:"dns"`
 	// The transport settings: Let's Encrypt's hostname, challenge and account
 	// email, and an own certificate's pair of files. Which of them is set is
 	// what DetectTransport reads.
@@ -246,6 +248,13 @@ func ParseHeadscaleConfig(data []byte) (ControlPlane, error) {
 
 		NoisePrivateKeyPath:  strings.TrimSpace(doc.Noise.PrivateKeyPath),
 		LegacyPrivateKeyPath: strings.TrimSpace(doc.PrivateKeyPath),
+	}
+	// The dns: section is read on its own: a malformed split map there is
+	// not a reason to lose the rest of the file.
+	if dns, err := ParseDNS(data); err == nil {
+		cp.DNS = dns
+	} else {
+		cp.DNS = DNSConfig{MagicDNS: cp.MagicDNS, BaseDomain: cp.BaseDomain, OverrideLocalDNS: true}
 	}
 	// Only SQLite keeps its data in a file on this machine; postgres is some
 	// other server's business.
@@ -594,15 +603,36 @@ func planEdit(lines []string, root *yaml.Node, edit ConfigEdit) (*splice, bool, 
 	parent := root
 	for i := 0; i < len(edit.Path)-1; i++ {
 		value, _, ok := mapEntry(parent, edit.Path[i])
-		if !ok || value.Kind != yaml.MappingNode || value.Style != 0 {
-			if edit.ClearOnly {
-				return nil, true, nil // nothing there to clear
-			}
-			// The section is missing, empty, or written in flow style; either
-			// way there is nothing to splice into.
+		switch {
+		case ok && value.Kind == yaml.MappingNode && value.Style == 0:
+			parent = value
+			continue
+		case edit.ClearOnly:
+			return nil, true, nil // nothing there to clear
+		case !ok && i == 0:
+			// The whole section is missing: it becomes a block at the end.
 			return nil, false, nil
+		case !ok:
+			// The section exists but this subsection does not: it goes in
+			// the section, below its first key. Appending it at the end
+			// would write the section's key a second time, which is a YAML
+			// error rather than a configuration.
+			at, indent := insertPointIn(lines, parent)
+			out := []string{}
+			for depth, part := range edit.Path[i : len(edit.Path)-1] {
+				out = append(out, indent+strings.Repeat("  ", depth)+part+":")
+			}
+			depth := len(edit.Path) - 1 - i
+			out = append(out, indent+strings.Repeat("  ", depth)+
+				edit.Path[len(edit.Path)-1]+": "+edit.Value)
+			return &splice{start: at, end: at, lines: out}, true, nil
 		}
-		parent = value
+		// The section is written in flow style, or is not a mapping at all:
+		// there is no line to splice a key into without rewriting the whole
+		// value, which is a hand edit.
+		return nil, false, fmt.Errorf("config.yaml: %s is not a block mapping, so %s "+
+			"cannot be set in it; edit it by hand", strings.Join(edit.Path[:i+1], "."),
+			strings.Join(edit.Path, "."))
 	}
 
 	key := edit.Path[len(edit.Path)-1]
@@ -672,12 +702,21 @@ func mapEntry(node *yaml.Node, key string) (value, keyNode *yaml.Node, ok bool) 
 // between two sections.
 func spanEnd(lines []string, start, keyIndent int, value *yaml.Node) int {
 	end := start + 1
-	if value != nil && value.Line-1 > start {
+	sameLine := value == nil || value.Line-1 <= start
+	if !sameLine {
 		end = value.Line - 1
 	}
 	for i := end; i < len(lines); i++ {
 		text := lines[i]
-		if strings.TrimSpace(text) == "" {
+		trimmed := strings.TrimSpace(text)
+		if sameLine && (trimmed == "" || strings.HasPrefix(trimmed, "#")) {
+			// A value on the key's own line (a scalar, `{}`, `[]`) continues
+			// only on the lines that carry more of it: the commented-out
+			// examples headscale's file keeps below `split: {}` are not part
+			// of the value and are left alone.
+			break
+		}
+		if trimmed == "" {
 			end = i + 1
 			continue
 		}
@@ -686,9 +725,14 @@ func spanEnd(lines []string, start, keyIndent int, value *yaml.Node) int {
 		}
 		end = i + 1
 	}
-	// Give back the blank lines at the tail of the span: they belong to
-	// whatever comes next, not to this key.
-	for end > start+1 && strings.TrimSpace(lines[end-1]) == "" {
+	// Give back the blank and comment lines at the tail of the span: they
+	// belong to whatever comes next (a commented-out example, the next key's
+	// explanation), not to this key's value.
+	for end > start+1 {
+		tail := strings.TrimSpace(lines[end-1])
+		if tail != "" && !strings.HasPrefix(tail, "#") {
+			break
+		}
 		end--
 	}
 	return end

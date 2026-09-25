@@ -41,6 +41,10 @@ const (
 	inputJoinKey
 	inputJoinHostname
 	inputJoinRoutes
+	// The name a join's answers are saved under as a join profile.
+	inputSaveProfile
+	// The CA certificate to trust when the login server's does not verify.
+	inputJoinCA
 	// The one-setting edits.
 	inputRoutes
 	inputHostname
@@ -67,6 +71,13 @@ const (
 	inputOIDCGroups
 	inputOIDCUsers
 	inputOIDCScope
+	// The dns screen's inputs.
+	inputDNSBase
+	inputDNSGlobal
+	inputDNSSearch
+	inputDNSSplitDomain
+	inputDNSSplitServers
+	inputDNSRecord
 )
 
 // pickerPurpose records what an open picker is choosing.
@@ -77,6 +88,10 @@ const (
 	pickerJoinAcceptRoutes
 	pickerJoinExitNode
 	pickerExitNode
+	// The join profile j starts from, and tailscale's login profile p
+	// switches to.
+	pickerJoinProfile
+	pickerLoginProfile
 
 	// The control plane's pickers. The two OIDC switches are pickers rather
 	// than typed words so there is nothing to spell wrong.
@@ -87,6 +102,13 @@ const (
 	pickerACMEChallenge
 	// The OIDC form's first step: which identity provider.
 	pickerOIDCProvider
+	// The dns screen's switches, and what n adds there.
+	pickerDNSMagic
+	pickerDNSOverride
+	pickerDNSNew
+	// R's two questions: which waiting registration, as which user.
+	pickerRegistration
+	pickerRegisterUser
 )
 
 // pickerYes and pickerNo are the two options of a boolean picker; noExitNode
@@ -114,6 +136,8 @@ type joinDraft struct {
 	hostname     string
 	acceptRoutes bool
 	routes       []string
+	// from is the join profile the answers were pre-filled from, if any.
+	from *tailscale.JoinProfile
 }
 
 // app is the Bubble Tea model. It drives both ends of a self-hosted tailnet:
@@ -151,8 +175,30 @@ type app struct {
 	join        joinDraft
 	notice      notice
 
+	// profiles are the join profiles (issue #4); profileChoices maps a
+	// profile picker's option to the profile name or login profile id it
+	// stands for.
+	profiles       profileStore
+	profileChoices map[string]string
+	// pendingJoin is the answers of the join being run, without its key;
+	// lastJoin keeps them while a browser login is pending, and offerSave
+	// asks for the save offer once the screen is free. saveDraft is the
+	// answers the save input is naming, and savingText the config file the
+	// confirmed save writes.
+	pendingJoin *tailscale.JoinProfile
+	lastJoin    *tailscale.JoinProfile
+	offerSave   *tailscale.JoinProfile
+	saveDraft   tailscale.JoinProfile
+	savingText  string
+
 	// cpDraft collects the control-plane forms' answers across their steps.
 	cpDraft controlPlaneDraft
+	// dnsDraft is the dns section as the open dns step would leave it.
+	dnsDraft dnsDraft
+	// registerDraft is the registration R is registering; registered the
+	// ones this session registered, which the journal still logs as started.
+	registerDraft string
+	registered    map[string]bool
 	// after, when set, runs once on the next successful control-plane
 	// command. It is how the control plane's multi-step flows chain — the
 	// secret, then config.yaml, then the restart — each step its own confirm.
@@ -175,6 +221,17 @@ type app struct {
 	// the retry was spent.
 	settling      bool
 	settleRetried bool
+
+	// loginURLShown is the pending login URL the status line carries, so a
+	// later read can replace it once the login completes or expires instead
+	// of leaving a dead link there (issue #10).
+	loginURLShown string
+	// loginPolling reports that a re-read is scheduled because a login is
+	// pending; loginPolls counts the re-reads spent on the current URL,
+	// loginPollURL, so the polling stops after loginPollLimit.
+	loginPolling bool
+	loginPolls   int
+	loginPollURL string
 }
 
 // settleDelay is how long the one automatic re-read after a change waits.
@@ -182,6 +239,20 @@ var settleDelay = time.Second
 
 // settleMsg asks for the automatic re-read after a change.
 type settleMsg struct{}
+
+// loginPollDelay is how long the re-read waits while a login is pending.
+// headscale takes up to half a minute after the browser confirms to finish
+// /machine/register, so the node flips from "logged out" to running a while
+// after the user is done; re-reading every few seconds shows it flip without
+// anyone pressing r.
+var loginPollDelay = 3 * time.Second
+
+// loginPollLimit bounds the re-reads spent on one pending login URL: about
+// three minutes at loginPollDelay, after which r still re-reads by hand.
+const loginPollLimit = 60
+
+// loginPollMsg asks for the re-read while a login is pending.
+type loginPollMsg struct{}
 
 // loadedMsg carries the result of a read: the node and the control plane,
 // read together so the two halves of the screen never disagree about when.
@@ -225,6 +296,7 @@ func newApp(backend tailscale.Backend, hs headscale.Backend, th theme.Theme,
 	a := &app{backend: backend, hs: hs, theme: th,
 		backendCompat: compatFor(probed, backendName),
 		hsCompat:      compatFor(probed, backendHeadscale),
+		registered:    map[string]bool{},
 		width:         80, height: 24, loading: true}
 	if th.Warning != "" {
 		a.setStatus(ui.StatusWarn, th.Warning)
@@ -240,6 +312,19 @@ func (a *app) Init() tea.Cmd { return a.load() }
 func (a *app) load() tea.Cmd {
 	backend, hs := a.backend, a.hs
 	return func() tea.Msg { return readBoth(backend, hs) }
+}
+
+// loadNode re-reads the node alone, keeping the control plane as it was read
+// last: the pending-login poll only waits for the node to flip, and has no
+// reason to re-read headscale's lists, journal and firewall every few seconds.
+func (a *app) loadNode() tea.Cmd {
+	backend, hsState := a.backend, a.hsState
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		state, err := backend.Load(ctx)
+		return loadedMsg{state: state, hsState: hsState, err: err}
+	}
 }
 
 // readBoth is one read of the node and the control plane.
@@ -374,6 +459,10 @@ func (a *app) runPlan(plan tailscale.Plan) tea.Cmd {
 func (a *app) setStatus(kind ui.StatusKind, message string) {
 	a.status = message
 	a.statusKind = kind
+	if message != a.loginURLShown {
+		// Another message took the line: there is no URL left to follow.
+		a.loginURLShown = ""
+	}
 }
 
 // setStatusf records a formatted message for the status line.
@@ -408,7 +497,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			retry = a.settleRead()
 		}
 		a.clampCursor()
-		return a, retry
+		a.followLogin()
+		if a.offerSave != nil && a.mode == modeBrowse {
+			answers := *a.offerSave
+			a.offerSave = nil
+			a.offerSaveProfile(answers)
+		}
+		return a, tea.Batch(retry, a.pollLogin())
 
 	case settleMsg:
 		if !a.settling {
@@ -417,9 +512,31 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loading = true
 		return a, a.load()
 
+	case loginPollMsg:
+		a.loginPolling = false
+		if a.state.Node.AuthURL == "" {
+			return a, nil
+		}
+		a.loginPolls++
+		return a, a.loadNode()
+
+	case firewallDoneMsg:
+		a.busy = false
+		if msg.err != nil {
+			a.setStatus(ui.StatusError, "tui-firewall: "+runner.FirstLine(msg.err.Error()))
+		} else {
+			a.setStatus(ui.StatusInfo, "back from tui-firewall · the ports are read again")
+		}
+		a.loading = true
+		return a, a.load()
+
 	case planRanMsg:
 		a.busy = false
 		a.planResult(msg)
+		if msg.plan.Action == tailscale.ActionTrustCA && msg.err == nil && a.join.server != "" {
+			// The CA is trusted now: check again, and go on with the join.
+			return a, tea.Batch(a.reloadAfterChange(), a.checkJoinTLS(a.join.server))
+		}
 		return a, a.reloadAfterChange()
 
 	case hsPlanRanMsg:
@@ -441,6 +558,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tlsCheckedMsg:
 		return a, a.tookTLSCheck(msg)
 
+	case joinTLSMsg:
+		return a, a.tookJoinTLS(msg)
+
 	case tea.KeyMsg:
 		return a.handleKey(msg)
 	}
@@ -456,6 +576,26 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // that printed a login URL, into the dialog that says to open it.
 func (a *app) planResult(msg planRanMsg) {
 	if msg.plan.Action == tailscale.ActionJoin {
+		// The answers are offered as a join profile once the join went
+		// through: now, or when a pending browser login completes.
+		answers := a.pendingJoin
+		a.pendingJoin = nil
+		switch {
+		case answers == nil:
+		case msg.err == nil && msg.cleanupErr == nil:
+			a.offerSave = answers
+		case tailscale.ParseLoginURL(msg.output+"\n"+errText(msg.err)) != "":
+			a.lastJoin = answers
+		}
+	}
+	if msg.plan.Action == tailscale.ActionSaveProfile && msg.err == nil {
+		a.profiles.saved(a.savingText)
+		a.savingText = ""
+		a.setStatus(ui.StatusOK, "join profile saved in "+a.profiles.path+
+			" · j starts from it next time")
+		return
+	}
+	if msg.plan.Action == tailscale.ActionJoin {
 		text := msg.output
 		if msg.err != nil {
 			text += "\n" + msg.err.Error()
@@ -468,6 +608,7 @@ func (a *app) planResult(msg planRanMsg) {
 			// The status line carries the URL alone, so nothing but the URL is
 			// there to select; the notice prints it outside its frame.
 			a.setStatus(ui.StatusWarn, url)
+			a.loginURLShown = url
 			a.openNotice("Log in to finish joining",
 				"tailscale is waiting for a login. Open the URL below in a browser — on "+
 					"any machine — and log in (with a self-hosted control plane, this is "+
@@ -547,6 +688,7 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// chained control-plane flow would take next.
 		a.after = nil
 		a.cpDraft.forgetSecret()
+		a.pendingJoin, a.savingText = nil, ""
 		a.setStatus(ui.StatusInfo, "cancelled")
 		return a, nil
 	}
@@ -595,13 +737,17 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		id, _ := payload.(string)
 		return a, a.confirmApproveRoutes(id, value)
 	case inputJoinServer:
-		a.tookJoinServer(value)
+		return a, a.tookJoinServer(value)
+	case inputJoinCA:
+		return a, a.tookJoinCA(value)
 	case inputJoinKey:
 		a.tookJoinKey(value)
 	case inputJoinHostname:
 		a.tookJoinHostname(value)
 	case inputJoinRoutes:
 		a.tookJoinRoutes(value)
+	case inputSaveProfile:
+		a.tookSaveProfileName(value)
 	case inputRoutes:
 		a.openPlan(tailscale.BuildCommand(tailscale.Request{
 			Action: tailscale.ActionAdvertiseRoutes, Routes: tailscale.SplitList(value)}))
@@ -621,9 +767,10 @@ func (a *app) handleInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // list, which revokes every approval (previewed as a danger dialog).
 func acceptsEmpty(purpose inputPurpose) bool {
 	switch purpose {
-	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes,
+	case inputJoinKey, inputJoinHostname, inputJoinRoutes, inputRoutes, inputSaveProfile,
 		inputOIDCDomains, inputOIDCGroups, inputOIDCUsers, inputOIDCSecret,
-		inputACMEEmail, inputBaseDomain, inputApproveRoutes:
+		inputACMEEmail, inputBaseDomain, inputApproveRoutes,
+		inputDNSBase, inputDNSGlobal, inputDNSSearch, inputDNSSplitServers, inputDNSRecord:
 		return true
 	}
 	return false
@@ -634,6 +781,9 @@ func acceptsEmpty(purpose inputPurpose) bool {
 func (a *app) cancelled() {
 	a.join = joinDraft{}
 	a.exitChoices = nil
+	a.profileChoices = nil
+	a.saveDraft = tailscale.JoinProfile{}
+	a.registerDraft = ""
 	a.cpDraft.forgetSecret()
 	a.setStatus(ui.StatusInfo, "cancelled")
 }
@@ -654,6 +804,10 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	switch purpose {
+	case pickerJoinProfile:
+		a.tookJoinProfile(choice)
+	case pickerLoginProfile:
+		a.tookLoginProfile(choice)
 	case pickerJoinAcceptRoutes:
 		a.join.acceptRoutes = choice == pickerYes
 		a.askJoinRoutes()
@@ -676,6 +830,16 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.tookChallenge(choice)
 	case pickerOIDCProvider:
 		return a, a.tookOIDCProvider(choice)
+	case pickerDNSMagic:
+		return a, a.tookDNSMagic(choice == pickerYes)
+	case pickerDNSOverride:
+		return a, a.tookDNSOverride(choice == pickerYes)
+	case pickerDNSNew:
+		return a, a.tookDNSNew(choice)
+	case pickerRegistration:
+		return a, a.tookRegistration(choice)
+	case pickerRegisterUser:
+		return a, a.tookRegisterUser(choice)
 	}
 	return a, nil
 }
@@ -808,7 +972,17 @@ func (a *app) startAction(action tailscale.Action) {
 			a.setStatus(ui.StatusInfo, "the node is not logged in")
 			return
 		}
-		a.openPlan(tailscale.BuildCommand(tailscale.Request{Action: action}))
+		plan, err := tailscale.BuildCommand(tailscale.Request{Action: action})
+		if p, ok := a.profiles.matching(s.Prefs); ok {
+			plan.Body += "\n\nThe join profile " + p.Name + " matches this node's settings: " +
+				"j restores them from it (with a new login or pre-auth key)."
+		} else {
+			plan.Body += "\n\nNo join profile matches this node's settings: the next j " +
+				"offers to save its answers as one."
+		}
+		a.openPlan(plan, err)
+	case tailscale.ActionSwitchProfile:
+		a.openLoginProfilePicker()
 	}
 }
 
@@ -935,6 +1109,16 @@ func (a *app) openExitNodePicker() {
 // host to its own control plane is the usual first node.
 func (a *app) startJoin() {
 	a.join = joinDraft{}
+	if len(a.profiles.list) > 0 {
+		a.openJoinProfilePicker()
+		return
+	}
+	a.startJoinQuestions()
+}
+
+// startJoinQuestions opens the join form without a profile.
+func (a *app) startJoinQuestions() {
+	a.join = joinDraft{}
 	server := a.state.Prefs.ControlURL
 	if tailscale.IsTailscaleControl(server) {
 		// A fresh client carries Tailscale's server as its default; the
@@ -964,7 +1148,10 @@ func (a *app) localServerURL() string {
 func (a *app) askJoinServer(value, problem string) {
 	help := "Join step 1 of 6 — the control server this node registers with: a Headscale's " +
 		"server_url, or " + tailscale.DefaultControlURL + " for Tailscale's own."
-	if local := a.localServerURL(); local != "" {
+	if p := a.join.from; p != nil {
+		help = "Join profile " + p.Name + " — every step is pre-filled from it and still " +
+			"editable.\n\n" + help
+	} else if local := a.localServerURL(); local != "" {
 		help += "\n\nThis control plane: headscale on this host serves " + local +
 			", so that is the answer offered."
 		if current := strings.TrimRight(a.state.Prefs.ControlURL, "/"); current != "" &&
@@ -978,14 +1165,24 @@ func (a *app) askJoinServer(value, problem string) {
 	a.openInput(inputJoinServer, "Login server", "https://headscale.example.com", value, help)
 }
 
-// tookJoinServer validates the server and asks for the key.
-func (a *app) tookJoinServer(value string) {
+// tookJoinServer validates the server and, for an https one, checks its
+// certificate from this machine before asking for the key.
+func (a *app) tookJoinServer(value string) tea.Cmd {
 	value = strings.TrimRight(value, "/")
 	if problem := tailscale.ServerURLProblem(value); problem != "" {
 		a.askJoinServer(value, problem)
-		return
+		return nil
 	}
 	a.join.server = value
+	if tailscale.IsHTTPS(value) {
+		return a.checkJoinTLS(value)
+	}
+	a.askJoinKey()
+	return nil
+}
+
+// askJoinKey asks for the pre-auth key, masked.
+func (a *app) askJoinKey() {
 	a.openInput(inputJoinKey, "Pre-auth key (optional)", "empty: log in with a browser", "",
 		"Join step 2 of 6 — a pre-auth key (Headscale: `headscale preauthkeys create`), or "+
 			"empty to log in with a browser instead. The key is not echoed, never shown "+
@@ -1006,6 +1203,9 @@ func (a *app) tookJoinKey(value string) {
 	if current == "" {
 		current = a.state.Node.HostName
 	}
+	if p := a.join.from; p != nil {
+		current = p.Hostname
+	}
 	a.openInput(inputJoinHostname, "Hostname (optional)", "empty: the machine's own name",
 		current, "Join step 3 of 6 — the name this node registers with. Empty uses the "+
 			"machine's hostname.")
@@ -1019,15 +1219,22 @@ func (a *app) tookJoinHostname(value string) {
 		return
 	}
 	a.join.hostname = value
+	accept := a.state.Prefs.RouteAll
+	if p := a.join.from; p != nil {
+		accept = p.AcceptRoutes
+	}
 	a.openPicker(pickerJoinAcceptRoutes,
-		"Join step 4 of 6 — accept the subnet routes other nodes advertise?",
-		a.state.Prefs.RouteAll)
+		"Join step 4 of 6 — accept the subnet routes other nodes advertise?", accept)
 }
 
 // askJoinRoutes asks for the subnets to advertise.
 func (a *app) askJoinRoutes() {
+	routes := a.state.Prefs.SubnetRoutes()
+	if p := a.join.from; p != nil {
+		routes = p.AdvertiseRoutes
+	}
 	a.openInput(inputJoinRoutes, "Advertise subnet routes (optional)", "192.168.1.0/24",
-		strings.Join(a.state.Prefs.SubnetRoutes(), ", "),
+		strings.Join(routes, ", "),
 		"Join step 5 of 6 — subnets other nodes can reach through this one, "+
 			"comma-separated. Empty advertises none.")
 }
@@ -1041,9 +1248,12 @@ func (a *app) tookJoinRoutes(value string) {
 		return
 	}
 	a.join.routes = routes
+	offer := a.state.Prefs.AdvertisesExitNode()
+	if p := a.join.from; p != nil {
+		offer = p.AdvertiseExitNode
+	}
 	a.openPicker(pickerJoinExitNode,
-		"Join step 6 of 6 — offer this node as an exit node?",
-		a.state.Prefs.AdvertisesExitNode())
+		"Join step 6 of 6 — offer this node as an exit node?", offer)
 }
 
 // confirmJoin builds the join and opens its confirm. The key leaves the draft
@@ -1051,6 +1261,13 @@ func (a *app) tookJoinRoutes(value string) {
 func (a *app) confirmJoin(exitNode bool) {
 	d := a.join
 	a.join = joinDraft{}
+	// The answers without the key: what a join profile would keep.
+	answers := tailscale.JoinProfile{LoginServer: d.server, Hostname: d.hostname,
+		AcceptRoutes: d.acceptRoutes, AdvertiseRoutes: d.routes, AdvertiseExitNode: exitNode}
+	if d.from != nil {
+		answers.Name = d.from.Name
+	}
+	a.pendingJoin = &answers
 	a.openPlan(tailscale.BuildCommand(tailscale.Request{
 		Action:            tailscale.ActionJoin,
 		LoginServer:       d.server,
@@ -1109,6 +1326,94 @@ func (a *app) rowCount() int {
 		return len(a.hsState.Nodes)
 	case screenKeys:
 		return len(a.hsState.PreAuthKeys)
+	case screenDNS:
+		return len(a.dnsRows())
 	}
 	return 0
+}
+
+// --- the pending login (issue #10) --------------------------------------------
+
+// followLogin keeps the status line honest about a login it announced. While
+// the status line carries a pending login URL, each read either finds the same
+// URL (nothing to say), a new one (the line shows the new one), the node
+// logged in (the dead link is replaced by who joined), or no login pending at
+// all (the link expired, and the line says so). When the login completes while
+// its notice is still open, the notice closes: there is nothing left to open.
+func (a *app) followLogin() {
+	shown := a.loginURLShown
+	if shown == "" {
+		return
+	}
+	n := a.state.Node
+	switch {
+	case n.AuthURL == shown:
+		return
+	case n.AuthURL != "":
+		a.setStatus(ui.StatusWarn, n.AuthURL)
+		a.loginURLShown = n.AuthURL
+		if a.mode == modeNotice && a.notice.copyable == shown {
+			a.notice.copyable = n.AuthURL
+		}
+		return
+	}
+	if a.mode == modeNotice && a.notice.copyable == shown {
+		a.mode = modeBrowse
+	}
+	if a.state.LoggedIn() && n.BackendState == tailscale.StateRunning {
+		a.setStatus(ui.StatusOK, joinedLine(n))
+		a.loginCompleted()
+		return
+	}
+	a.setStatus(ui.StatusWarn, "the pending login expired or was cancelled — j starts a new one")
+}
+
+// joinedLine says who joined which tailnet, for the status line that replaces
+// a login URL once the login went through.
+func joinedLine(n tailscale.Node) string {
+	line := "joined"
+	if n.TailnetName != "" {
+		line += " " + n.TailnetName
+	}
+	if n.User != "" {
+		line += " as " + n.User
+	}
+	if len(n.IPs) > 0 {
+		line += " · " + n.IPs[0]
+	}
+	return line
+}
+
+// pollLogin schedules the next re-read while a login is pending, bounded per
+// URL: a new URL starts a new count, and no pending login resets it.
+func (a *app) pollLogin() tea.Cmd {
+	url := a.state.Node.AuthURL
+	if url == "" {
+		a.loginPolls, a.loginPollURL = 0, ""
+		return nil
+	}
+	if url != a.loginPollURL {
+		a.loginPolls, a.loginPollURL = 0, url
+	}
+	if a.loginPolling || a.loginPolls >= loginPollLimit {
+		return nil
+	}
+	a.loginPolling = true
+	return tea.Tick(loginPollDelay, func(time.Time) tea.Msg { return loginPollMsg{} })
+}
+
+// loginCompleted is the hook a completed browser login runs: the join form's
+// answers, when this session collected them, are offered as a join profile.
+func (a *app) loginCompleted() {
+	if a.lastJoin != nil {
+		a.offerSave, a.lastJoin = a.lastJoin, nil
+	}
+}
+
+// errText is an error's text, empty for none.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

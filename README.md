@@ -24,16 +24,16 @@ It manages as well as reads. Every change is shown as the exact command line fir
 tui-tailscale --demo
 ```
 
-`--demo` runs every screen against one sample tailnet, both ends of it: a fake node joined to `https://headscale.example.com`, with two peers — `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet — and the fake control plane that serves them, where the node is registered under `user@example.com` and `office-router` advertises a second subnet nobody approved yet, so `r` has something to approve. Its unit runs but is disabled, the way a fresh install is usually left, so the readiness line and the end of `S` and `O` show the enable. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
+`--demo` runs every screen against one sample tailnet, both ends of it: a fake node joined to `https://headscale.example.com`, with two peers — `exit-gateway`, which offers itself as an exit node, and `office-router`, which serves a subnet — and the fake control plane that serves them, where the node is registered under `user@example.com` and `office-router` advertises a second subnet nobody approved yet, so `r` has something to approve; a laptop waits to register, so `R` has one to register; the DNS section carries a split domain and an extra record; two join profiles pre-fill `j`, and a login server under `.internal` (`https://headscale.lab.internal`) walks the private-CA step. Its unit runs but is disabled, the way a fresh install is usually left, so the readiness line and the end of `S` and `O` show the enable. Every key works, every command is built and previewed for real, and each confirmed one is applied to the fake — nothing on the host is read or changed.
 
 ## Screens
 
-`tab` (or `1` to `5`) switches between them. `j` and `h` are actions here, so the selection moves with the arrow keys. The header names both backends with their versions — `tailscale 1.102.4` and `headscale 0.29.3`, or `headscale: not installed` — and the keys belong to the screen they are pressed on: the node's on the node and peers screens, the control plane's on the other three.
+`tab` (or `1` to `6`) switches between them. `j` and `h` are actions here, so the selection moves with the arrow keys. The header names both backends with their versions — `tailscale 1.102.4` and `headscale 0.29.3`, or `headscale: not installed` — and the keys belong to the screen they are pressed on: the node's on the node and peers screens, the control plane's on the other four.
 
 - **node** — the backend state (running, stopped, logged out, waiting for approval), the login server and whether it is self-hosted, the owner, the hostname and MagicDNS name, the tailnet addresses, and the settings: accept routes, advertised routes, the exit node in use, whether this node offers itself as one, accept DNS, the client version and its health warnings. A login waiting for a browser shows its URL here until it completes. When tailscale is not installed, or tailscaled is not running, or refuses this user, the screen says so and what to do.
 - **peers** — the rest of the tailnet: name, owner, tailnet address, online (or when last seen), OS, whether the peer offers an exit node or is the one in use, and the subnets it serves (its primary routes and any allowed prefix beyond its own addresses).
 
-- **users**, **nodes**, **preauth keys** — the control plane on this host, behind a `headscale:` mark in the tab bar so its nodes cannot be read as this node's peers. See [Control plane (headscale)](#control-plane-headscale).
+- **users**, **nodes**, **preauth keys**, **dns** — the control plane on this host, behind a `headscale:` mark in the tab bar so its nodes cannot be read as this node's peers. See [Control plane (headscale)](#control-plane-headscale).
 
 ![The peers screen](docs/screenshots/tui-tailscale-peers.png)
 
@@ -47,6 +47,7 @@ The guided path from an empty host to a working tailnet, with this host as both 
    With Google, the preset needs `server_url` on https with a DNS name, because Google refuses a redirect URI that is plain http or an IP address; register `https://vpn.example.com/oidc/callback` as the OAuth client's redirect URI. headscale applies the allow lists as AND: a login has to match every list that is not empty, so with `allowed_domains: [example.com]` an address from another domain is refused even when `allowed_users` names it. `allowed_users: [user@example.com]` alone lets exactly that person in.
 4. **Install tailscale.** Back on the node screen (`1`), `i` installs the client from Tailscale's own package repository and starts `tailscaled`.
 5. **Join.** `j` offers this host's control plane as the login server. Paste the pre-auth key, or leave it empty and open the login URL the tool shows in any browser to log in through the IdP. Advertise `10.0.0.0/16` to make this host a subnet router; the same preview turns IP forwarding on.
+   If the join seems to hang, look at the nodes screen (`4`): a node that started its registration and has not logged in yet is listed there as waiting, with the URL that finishes it, and `R` registers it without a browser.
 6. **Approve the routes.** On the nodes screen (`4`), select this host and press `r`: the list is prefilled with what it advertises, so approving it is one keystroke.
 7. **Join the clients.** On every other machine, join with routes accepted, so it reaches `10.0.0.0/16` through this host:
 
@@ -57,6 +58,24 @@ The guided path from an empty host to a working tailnet, with this host as both 
    A machine that already runs tui-tailscale does the same with `j` and a yes to accepting routes, or `a` once joined.
 
 This is the path validated end to end on a real Ubuntu 24.04 host, with Google as the identity provider and the host serving a subnet to its clients.
+
+## Private tailnet
+
+A tailnet with no public DNS name and no Let's Encrypt: headscale on https with a certificate from a local certificate authority (tui-cert issues one), clients that trust that CA, and the host's ports opened by tui-firewall (a cloud image's INPUT chain usually ends in REJECT). The names are examples: `headscale.lab.internal` for the control plane, `/etc/tui-cert/ca.crt` for the CA's certificate.
+
+1. **Serve the certificate.** `S` on the users screen, transport *own certificate*, and the paths of the certificate and key tui-cert issued for `headscale.lab.internal` (checked from this machine: the account headscale runs as has to be able to read both).
+2. **Open the ports.** The readiness line reads the host firewall and says when `443/tcp` (the control plane) is closed, and whether `41641/udp` (the node's direct connections) is; `f` hands the terminal to tui-firewall to open them, and they are read again when it exits. See [the ports step](#the-next-step).
+3. **Join, trusting the CA.** `j` checks the login server's certificate against this machine's trust store before it runs `tailscale up`. When it does not verify, the join says so and asks for the CA's certificate: typed as a path, previewed as the distribution's own way of adding a trust anchor, then the join goes on:
+
+   | Distribution | Trust step |
+   | --- | --- |
+   | Debian, Ubuntu | `install -m 644 <ca> /usr/local/share/ca-certificates/tui-tailscale-<host>.crt` and `update-ca-certificates` |
+   | Fedora, RHEL | `install -m 644 <ca> /etc/pki/ca-trust/source/anchors/tui-tailscale-<host>.crt` and `update-ca-trust` |
+   | Arch, Omarchy | `trust anchor --store <ca>` |
+
+   ![The CA step of a join](docs/screenshots/tui-tailscale-trust.png)
+
+   Each ends with `systemctl restart tailscaled`, because a running daemon keeps the roots it loaded at start. The dialog says what trusting a CA means: every program on the machine that uses the system trust store trusts what it signs. A certificate that is trusted but issued for another name is reported as such, since no CA fixes it.
 
 ## Manage, not view
 
@@ -74,11 +93,23 @@ The login server is validated the way the control plane's `S` validates headscal
 
 **With a pre-auth key**, the key is typed masked and never put on a command line. It travels on the standard input of `install`, which writes it mode 600 to `/run/tui-tailscale.authkey` (root-owned, on a tmpfs); tailscale reads it from there through `--authkey=file:…`; and `rm -f` removes the file after the join, whether the join worked or not. The key appears in no argv, no preview and no status line.
 
-**Without a key**, tailscale prints a login URL. tui-tailscale takes it from the command's output and shows it in a dialog and alone on the status line: open it in a browser, on any machine, and log in. With a self-hosted Headscale that is your identity provider's OIDC login. The node joins as soon as the login completes, and the URL stays on the node screen until then. Wherever it is shown, the URL sits on a line of its own, flush left, never wrapped and never inside a frame, so a terminal selection copies the URL and nothing else. On a terminal narrower than the URL the line is cut at the edge; `tui-tailscale --check | jq -r .loginUrl` prints it whole.
+**Without a key**, tailscale prints a login URL. tui-tailscale takes it from the command's output and shows it in a dialog and alone on the status line: open it in a browser, on any machine, and log in. With a self-hosted Headscale that is your identity provider's OIDC login. The node joins as soon as the login completes, and the URL stays on the node screen until then. While a login is pending the tool re-reads the node every few seconds on its own (for about three minutes; `r` re-reads by hand after that), because headscale takes up to half a minute after the browser confirms to finish the registration. When the login went through, the URL on the status line is replaced by `joined <tailnet> as <user>` and the dialog closes; when the pending login disappears without one, the status line says it expired instead of keeping a dead link. Wherever it is shown, the URL sits on a line of its own, flush left, never wrapped and never inside a frame, so a terminal selection copies the URL and nothing else. On a terminal narrower than the URL the line is cut at the edge; `tui-tailscale --check | jq -r .loginUrl` prints it whole.
 
 ![The login URL, outside the frame](docs/screenshots/tui-tailscale-login.png)
 
 When the join advertises routes or an exit node, the same preview turns IP forwarding on, persistently: `install` writes `/etc/sysctl.d/99-tailscale.conf` and `sysctl -w` applies it now. tailscale warns about missing forwarding but does not set it.
+
+### Join profiles
+
+A machine that leaves and re-joins its tailnet while things are being set up (a logout to test a fresh join, a re-key, a move to a new control plane) is asked the same six questions every time. A **join profile** is this tool's preset for `j`: those answers under a name. When there are any, `j` opens with a picker (a saved profile, or new questions); picking one pre-fills every step, still editable and still previewed, so the join is confirm-and-go. The profile that matches the node's current settings is the one offered.
+
+After a join with new answers (right away with a pre-auth key, or once a browser login completes), the tool offers to save them: type a name, or leave it empty to skip. The save is a previewed write of the config file, with the lines that change shown as a diff: `/etc/tui-tailscale/config.toml` for root, `~/.config/tui-tailscale/config.toml` for any other user (written as that user; its profiles override the machine-wide ones of the same name). A profile is a `[[profile]]` table with `name`, `login_server`, `hostname`, `accept_routes`, `advertise_routes` and `advertise_exit_node` (see [`examples/config.toml`](examples/config.toml)). It never holds a secret: the pre-auth key is asked for every time and is not part of a profile.
+
+![j with join profiles](docs/screenshots/tui-tailscale-profiles.png)
+
+The node screen names the join profile that matches its settings, and the logout dialog says which one restores them. `--check` lists the profile names only (`joinProfiles`).
+
+**Login profiles are something else.** tailscale keeps one login profile per identity it has logged in with (`tailscale switch --list`). The node screen shows the one in use and how many there are, and `p` switches between them (`tailscale switch <id>`, previewed) when there is more than one.
 
 ### One setting at a time
 
@@ -106,7 +137,8 @@ When `tailscale` is absent, the node screen says how to install it on this distr
 
 - **Ubuntu and Debian**: Tailscale's signing key and apt source list for the release's codename, fetched from pkgs.tailscale.com into `/usr/share/keyrings` and `/etc/apt/sources.list.d`, then `apt-get update` and `apt-get install -y tailscale`.
 - **Fedora** (and the RHEL rebuilds): Tailscale's `.repo` file fetched into `/etc/yum.repos.d` — the file `dnf config-manager --add-repo` would add, written in the way that works with both dnf4 and dnf5 — then `dnf install -y tailscale`.
-- **Arch and Omarchy**: `pacman -Syu --needed --noconfirm tailscale`. Arch supports no partial upgrade, so refreshing the package database to install one package upgrades the machine with it; the dialog says so.
+- **Arch**: `pacman -Syu --needed --noconfirm tailscale`. Arch supports no partial upgrade, so refreshing the package database to install one package upgrades the machine with it; the dialog says so.
+- **Omarchy**: `pacman -S --needed --noconfirm tailscale`. Omarchy upgrades the machine only through `omarchy update` (a pacman hook refuses a direct `-Syu`), so the package is installed against the database the last update synced, without `-y`, which is not a partial upgrade; if pacman cannot find the file, `omarchy update` first.
 
 Each ends with `systemctl enable --now tailscaled`. Anything else is pointed at https://tailscale.com/download/linux.
 
@@ -123,6 +155,7 @@ What tui-tailscale does own is the *configuration* of that identity: `S` and `O`
 - **users** — the Headscale users, and the provider they authenticate against, under a panel showing what `/etc/headscale/config.yaml` says: `server_url`, `listen_addr`, `dns.base_domain`, the transport and the OIDC redirect URI it implies, the OIDC issuer and client id, whether a client secret is set, the allow lists, and the state of the `headscale` unit: active or not, enabled at boot or not, the account it runs as, and whether that account owns its state files. `n` creates a user; `S` and `O` configure the control plane; `F` fixes the ownership of headscale's files.
 - **nodes** — the machines registered with Headscale, who owns each, key expiry, and the routes each advertises with whether they are approved. `r` approves or revokes routes, `e` expires a node, `m` renames one, `x` deletes one (`ctrl+r` reloads here, since `r` is taken).
 - **preauth keys** — the keys that let a machine register itself, shown by prefix only. `n` creates one, shown exactly once.
+- **dns** — headscale's `dns:` section, one row per setting, split domain and extra record. See [DNS](#dns-the-dns-screen).
 
 ![The control plane: the readiness line, the panel, and the users](docs/screenshots/tui-tailscale-users.png)
 
@@ -139,11 +172,20 @@ A control plane comes up in an order, and each step only makes sense once the on
 | install | the `headscale` binary is here | `i` installs it |
 | server | `server_url` is set, valid and not loopback, and `dns.base_domain` is one headscale will start with | `S` sets the transport, `server_url` and `base_domain` |
 | unit | the unit is running, and enabled at boot | how to start it, or that `S` and `O` end with the enable |
+| ports | the host firewall lets new connections reach the `server_url` port (443/tcp for https) | `443/tcp is closed in the host firewall` — `f` opens tui-firewall |
 | identity | OIDC is configured, or a pre-auth key can still register a machine | `O` sets up an identity provider, or `n` on the keys screen creates a key |
-| first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine |
+| first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine; when a node is already waiting for its login, `R` on the nodes screen registers it |
 | routes | no advertised route waits for approval | `routes pending approval (N)` — `r` on the nodes screen |
 
-`--check` carries the same answer as `headscale.readiness`: each step as a boolean (`serverConfigured`, `unitRunning`, `unitEnabled`, `oidcConfigured`, `preAuthKey`, `firstNode`, `routesApproved`, with `routesPending` counted), `next` naming the first missing one, and `nextStep` the sentence.
+The ports step reads the host firewall, and never changes it: `tui-firewall --check` when the family's firewall tool is installed (it already understands ufw, firewalld and nftables), otherwise `nft -j list ruleset` or `iptables -S INPUT`, all escalated. A rule this reader cannot judge (a jump to another chain, a match on an interface or a source) never decides the answer, and a firewall it cannot read is reported as unknown rather than open or closed. A closed `41641/udp` is not a missing step, since peers then relay through DERP, but the ready line says so. `f`, on any control-plane screen, hands the terminal to tui-firewall the way the tui-tools launcher starts a family tool, with no argument; the screen comes back, and re-reads, when it exits. `--check` reports the answer as `readiness.ports`: the source, the two ports and what the firewall does to each (`open`, `closed` or `unknown`).
+
+The hint bar at the bottom says the same: on the screen where the next step is done, its key comes first, marked `◂ next` (`S` on the users screen while the server is not set up, `j` on the node screen while there is no node, `r` on the nodes screen while routes wait).
+
+`--check` carries the same answer as `headscale.readiness`: each step as a boolean (`serverConfigured`, `unitRunning`, `unitEnabled`, `oidcConfigured`, `preAuthKey`, `firstNode`, `routesApproved`, with `routesPending` and `pendingRegistrations` counted), `next` naming the first missing one, and `nextStep` the sentence.
+
+### Nodes waiting to register (`R` on the nodes screen)
+
+A client that runs `tailscale up --login-server=…` without a key starts a registration that headscale keeps in a cache for 15 minutes and nowhere else: `headscale nodes list` does not show it, and the client may print nothing at all (a stale identity from another control plane does that). headscale does log it, so the tool reads the unit's journal of the last 15 minutes (`journalctl -u headscale`, escalated) and lists every registration started there and not confirmed yet. The nodes screen says how many are waiting and prints the newest one's `/register/<id>` URL on a line of its own, for a browser; `R` finishes it from here instead, as a user you pick: `headscale auth register --auth-id <id> --user <user>` on headscale 0.29 and later, `headscale nodes register --key <id> --user <user>` before. `--check` counts them (`pendingRegistrations`) and prints neither the ids nor the URLs.
 
 ### Install headscale (`i` on a control-plane screen)
 
@@ -264,6 +306,22 @@ headscale nodes approve-routes --identifier <id> --routes 10.0.0.0/16,0.0.0.0/0,
 ```
 
 A revocation is a danger dialog, and revoking everything is written `--routes=` so the empty value is visible. (`headscale routes` no longer exists since 0.26; the field names were checked against headscale 0.29.3's own output: `available_routes`, `approved_routes`, `subnet_routes`.) `--check` reports each node's routes as counts, `nodeRoutes` with `advertised`, `approved`, `pending` and `exitNode`, never the networks themselves.
+
+### DNS (the dns screen)
+
+What nodes resolve, and how, lives in headscale's `dns:` section, and the dns screen edits all of it without opening `config.yaml`: MagicDNS and `base_domain`, `override_local_dns`, the global nameservers, split nameservers per domain (a private network's own resolver for its internal domain only, `169.254.169.254` for `oraclevcn.com` on an OCI VCN, say), the search domains, and the extra records headscale answers itself. `e` edits the selected row, `n` adds a split domain or a record, `x` removes the selected one.
+
+Each change goes through the same splice writer as `S` and `O`: the confirm shows the lines of `config.yaml` that change and nothing else, the rest of the file (headscale's commented-out examples below `split: {}` included) is kept byte for byte, and the restart follows as its own confirm. Lists and maps are written in YAML flow style on the key's own line, so adding a split domain is one line of diff:
+
+```yaml
+    split: {"corp.example.com": ["10.0.0.2"], "oraclevcn.com": ["169.254.169.254"]}
+```
+
+Every edit is proven before it is shown: the edited file is read back, and what headscale would read has to be exactly what the form asked for; a `dns:` section written in a shape the splice cannot edit safely (in flow style, say) is refused rather than rewritten. The checks are headscale's own: `base_domain` is required while MagicDNS is on and must not contain the `server_url` host, a nameserver is an IP address or an `https://` DNS-over-HTTPS URL, a split domain needs at least one nameserver, and a record is `name type address` with A or AAAA only (headscale's own configuration notes that only those reach a Tailscale client, so a CNAME would be written and never answered). A record outside `base_domain` is allowed, with a note. While `extra_records_path` is set, the records come from that file and are not edited here.
+
+![The dns screen](docs/screenshots/tui-tailscale-dns.png)
+
+`--check` reports the section as `dns` in `controlPlane`: the two switches and how many global nameservers, split domains, search domains and records there are, never the names and addresses themselves.
 
 ### Node rename and delete (`m` / `x`)
 

@@ -3,6 +3,8 @@ package headscale
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +49,8 @@ type Fake struct {
 	// server is still coming up.
 	absent, detected bool
 	refuse           int
+	// Launched records the tools f handed the terminal to, for the tests.
+	Launched []string
 }
 
 // demoNewPreAuthKey is the one-time key the demo "creates". Plainly fake.
@@ -113,6 +117,13 @@ oidc:
 dns:
   magic_dns: true
   base_domain: tailnet.example.com
+  override_local_dns: true
+  nameservers:
+    global: ["1.1.1.1", "1.0.0.1"]
+    # The office network's names resolve through its own resolver.
+    split: {"corp.example.com": ["10.0.0.2"]}
+  search_domains: ["tailnet.example.com"]
+  extra_records: [{name: "grafana.tailnet.example.com", type: "A", value: "100.64.0.3"}]
 
 log:
   level: info
@@ -289,6 +300,7 @@ func (f *Fake) Load(_ context.Context) (State, error) {
 	state.Users = append([]User(nil), f.state.Users...)
 	state.Nodes = append([]Node(nil), f.state.Nodes...)
 	state.PreAuthKeys = append([]PreAuthKey(nil), f.state.PreAuthKeys...)
+	state.Registrations = append([]Registration(nil), f.state.Registrations...)
 	if msg := NotRunningMessage(state.ControlPlane); msg != "" {
 		state.Error, state.NotRunning = msg, true
 		state.Users, state.Nodes, state.PreAuthKeys = nil, nil, nil
@@ -317,6 +329,8 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 		return f.createPreAuthKey(argv)
 	case len(argv) == 4 && argv[0] == "headscale" && argv[1] == "users" && argv[2] == "create":
 		return f.createUser(argv[3])
+	case len(argv) == 7 && argv[0] == "headscale" && argv[2] == "register":
+		return f.register(argv[4], argv[6])
 	case len(argv) == 3 && argv[0] == "sh" && argv[1] == "-c" &&
 		strings.Contains(argv[2], HeadscaleConfigPath):
 		return f.writeHeadscaleConfig(cmd.Stdin)
@@ -395,6 +409,105 @@ func (f *Fake) writeHeadscaleConfig(content string) (string, error) {
 	f.state.ControlPlane.OIDC.ClientSecretSet =
 		secretSet || f.state.ControlPlane.OIDC.ClientSecretSet
 	return "", nil
+}
+
+// DemoFirewall is the demo host's firewall as tui-firewall reads it: ufw
+// denying input by default, with 443/tcp open for the control plane and
+// nothing for tailscale's 41641/udp, so the readiness line has the node port
+// to point at.
+func DemoFirewall() Firewall {
+	fw, _ := ParseTuiFirewallCheck(`{"enabled": true, "model": {"Groups": [{"Name": "rules",
+		"Default": {"Incoming": "deny"}, "Rules": [
+		{"Action": "LIMIT", "Direction": "IN", "Proto": "tcp", "Ports": "22", "From": "Anywhere"},
+		{"Action": "ALLOW", "Direction": "IN", "Proto": "tcp", "Ports": "80,443", "From": "Anywhere"}]}]}}`)
+	fw.Launchable = true
+	return fw
+}
+
+// SetFirewall replaces the demo host's firewall, so a test can close a port.
+func (f *Fake) SetFirewall(fw Firewall) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.Firewall = fw
+}
+
+// LaunchFirewall records the hand-over and starts nothing: the demo reaches
+// every key, and handing the terminal to a tool that may not be installed is
+// not something a demo may do.
+func (f *Fake) LaunchFirewall() (Process, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.state.Firewall.Launchable {
+		return nil, fmt.Errorf("%s is not installed (it comes from pkgs.tui.tools)", FirewallTool)
+	}
+	f.Launched = append(f.Launched, FirewallTool)
+	return &demoProcess{name: FirewallTool}, nil
+}
+
+// demoProcess is the hand-over that does not happen: it prints one line where
+// the tool would have drawn.
+type demoProcess struct {
+	name string
+	out  io.Writer
+}
+
+// Run writes the line that stands in for the tool.
+func (d *demoProcess) Run() error {
+	out := d.out
+	if out == nil {
+		out = os.Stdout
+	}
+	_, err := fmt.Fprintf(out, "demo: %s would run here, with the terminal to itself\n", d.name)
+	return err
+}
+
+// SetStdin is ignored: nothing reads.
+func (d *demoProcess) SetStdin(io.Reader) {}
+
+// SetStdout is where the stand-in line goes.
+func (d *demoProcess) SetStdout(w io.Writer) { d.out = w }
+
+// SetStderr is ignored: nothing fails.
+func (d *demoProcess) SetStderr(io.Writer) {}
+
+// String is the command line the real hand-over would run.
+func (d *demoProcess) String() string { return d.name }
+
+// DemoAuthID is the registration the demo has waiting: a laptop that ran
+// `tailscale up --login-server` and has not logged in yet.
+const DemoAuthID = "hskey-authreq-DemoLaptopWaiting0001"
+
+// SetRegistrations replaces the pending registrations, so a test can stage
+// the ones it wants.
+func (f *Fake) SetRegistrations(regs []Registration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state.Registrations = regs
+}
+
+// register applies `headscale auth register` (or its older name): the
+// registration becomes a node of that user.
+func (f *Fake) register(authID, user string) (string, error) {
+	for i, reg := range f.state.Registrations {
+		if reg.AuthID != authID {
+			continue
+		}
+		known := false
+		for _, u := range f.state.Users {
+			known = known || u.Name == user
+		}
+		if !known {
+			return "", fmt.Errorf("user not found: %s", user)
+		}
+		f.state.Registrations = append(f.state.Registrations[:i:i], f.state.Registrations[i+1:]...)
+		next := fmt.Sprintf("%d", len(f.state.Nodes)+1)
+		f.state.Nodes = append(f.state.Nodes, Node{ID: next, Name: "laptop", GivenName: "laptop",
+			User: user, IPAddresses: []string{"100.64.0." + next, "fd7a:115c:a1e0::" + next},
+			LastSeen: time.Now(), Online: true, RegisterMethod: "cli",
+			Expiry: time.Now().Add(180 * 24 * time.Hour)})
+		return "Node laptop registered", nil
+	}
+	return "", fmt.Errorf("auth ID not found: %s", authID)
 }
 
 func (f *Fake) deleteNode(id string) (string, error) {
@@ -580,6 +693,8 @@ func demoState() State {
 				ApprovedRoutes:  []string{"192.0.2.0/24"},
 				SubnetRoutes:    []string{"192.0.2.0/24"}},
 		},
+		Registrations: []Registration{{AuthID: DemoAuthID, Seen: now.Add(-90 * time.Second)}},
+		Firewall:      DemoFirewall(),
 		PreAuthKeys: []PreAuthKey{
 			{ID: "1", User: "ops@example.com", KeyPrefix: "0123456789", Reusable: true,
 				Ephemeral: false, Used: true,

@@ -55,6 +55,12 @@ type State struct {
 	Users        []User       `json:"users"`
 	Nodes        []Node       `json:"nodes"`
 	PreAuthKeys  []PreAuthKey `json:"preAuthKeys"`
+	// Registrations are the nodes waiting for their login to be confirmed,
+	// read from headscale's journal (see registrations.go).
+	Registrations []Registration `json:"-"`
+	// Firewall is the host firewall's input chain as read for the readiness
+	// ports step (see ports.go).
+	Firewall Firewall `json:"-"`
 
 	// Distro and Repo are what the companion install needs when headscale is
 	// absent: the distribution, and whether the tui-tools repository — the
@@ -152,4 +158,9 @@ type Backend interface {
 	// answer. The server-settings form uses it to check that the service
 	// account can read a certificate before it writes the path down.
 	Stat(ctx context.Context, paths []string) map[string]FileStat
+	// LaunchFirewall prepares the hand-over of the terminal to tui-firewall,
+	// the family's tool for opening the ports the readiness line reports
+	// closed. It is not a change and is not previewed as one: tui-firewall
+	// previews and confirms whatever it changes.
+	LaunchFirewall() (Process, error)
 }

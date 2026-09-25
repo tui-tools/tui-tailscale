@@ -17,6 +17,7 @@ const (
 	NextInstall   = "install"
 	NextServer    = "server"
 	NextUnit      = "unit"
+	NextPorts     = "ports"
 	NextIdentity  = "identity"
 	NextFirstNode = "first-node"
 	NextRoutes    = "routes"
@@ -43,6 +44,14 @@ type Readiness struct {
 	PreAuthKey     bool `json:"preAuthKey"`
 	// FirstNode is the fourth: at least one node is registered.
 	FirstNode bool `json:"firstNode"`
+	// PendingRegistrations counts the nodes waiting for their login to be
+	// confirmed (read from headscale's journal): the first node usually
+	// shows up here before it shows up in the node list.
+	PendingRegistrations int `json:"pendingRegistrations"`
+	// Ports is the host firewall's answer for the control plane's port and
+	// the node's, present when the firewall could be read. A closed control
+	// port is the step after the unit: headscale runs, and nobody reaches it.
+	Ports *PortsReadiness `json:"ports,omitempty"`
 	// RoutesPending counts the advertised routes nobody approved yet, an exit
 	// node counting as one; RoutesApproved is the last step, none pending.
 	RoutesPending  int  `json:"routesPending"`
@@ -68,7 +77,12 @@ func ReadinessFor(h State, now time.Time) Readiness {
 			r.PreAuthKey = true
 		}
 	}
+	if h.Present && h.Firewall.Source != "" && r.ServerConfigured {
+		ports := PortsFor(h.Firewall, cp.ServerURL)
+		r.Ports = &ports
+	}
 	r.FirstNode = len(h.Nodes) > 0
+	r.PendingRegistrations = len(h.Registrations)
 	for _, n := range h.Nodes {
 		r.RoutesPending += pendingRoutes(n)
 	}
@@ -88,10 +102,19 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		r.Next = NextUnit
 		r.NextStep = "headscale runs but won't start at boot · S or O end with the " +
 			"enable (or: systemctl enable " + HeadscaleService + ")"
+	case r.Ports != nil && r.Ports.Control == PortClosed:
+		r.Next = NextPorts
+		r.NextStep = strconv.Itoa(r.Ports.ControlPort) + "/tcp is closed in the host " +
+			"firewall (read from " + r.Ports.Source + "): clients cannot reach headscale · " +
+			firewallHint(h.Firewall)
 	case !r.OIDCConfigured && !r.PreAuthKey:
 		r.Next = NextIdentity
 		r.NextStep = "no way to log in yet · O sets up an identity provider, or n on " +
 			"the keys screen creates a pre-auth key"
+	case !r.FirstNode && r.PendingRegistrations > 0:
+		r.Next = NextFirstNode
+		r.NextStep = "a node is waiting to register · R on the nodes screen registers it " +
+			"as a user, or open its /register URL in a browser"
 	case !r.FirstNode:
 		r.Next = NextFirstNode
 		r.NextStep = "no node yet · j on the node screen joins this host (or " +
@@ -103,8 +126,21 @@ func ReadinessFor(h State, now time.Time) Readiness {
 	default:
 		r.Next = NextReady
 		r.NextStep = "ready · clients can log in and every advertised route is approved"
+		if r.Ports != nil && r.Ports.Node == PortClosed {
+			r.NextStep += " · " + strconv.Itoa(NodePort) + "/udp is closed here, so peers " +
+				"relay through DERP instead of connecting directly · " + firewallHint(h.Firewall)
+		}
 	}
 	return r
+}
+
+// firewallHint is the way to open a port: f when tui-firewall is here, the
+// package that brings it otherwise.
+func firewallHint(fw Firewall) string {
+	if fw.Launchable {
+		return "f opens tui-firewall"
+	}
+	return "open it with the host's firewall tool (tui-firewall, from pkgs.tui.tools, does it)"
 }
 
 // serverReady reports whether config.yaml is set up for clients.

@@ -26,6 +26,8 @@ const (
 	screenNodes
 	// screenKeys lists headscale's pre-authentication keys.
 	screenKeys
+	// screenDNS is headscale's dns: section, one row per setting.
+	screenDNS
 	// screenCount is the number of screens: it drives the tab bar and the
 	// per-screen cursor arrays.
 	screenCount
@@ -42,6 +44,8 @@ func (s screen) title() string {
 		return "nodes"
 	case screenKeys:
 		return "preauth keys"
+	case screenDNS:
+		return "dns"
 	}
 	return "node"
 }
@@ -57,8 +61,11 @@ func (s screen) controlPlane() bool { return s >= screenUsers }
 // handleControlPlaneKey dispatches the action keys of the control-plane
 // screens.
 func (a *app) handleControlPlaneKey(key string) tea.Cmd {
-	if key == "i" {
+	switch key {
+	case "i":
 		return a.startInstallHeadscale()
+	case "f":
+		return a.launchFirewall()
 	}
 	switch a.screen {
 	case screenUsers:
@@ -101,6 +108,8 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 				return a.warnNothing()
 			}
 			return a.startApproveRoutes(node)
+		case "R":
+			return a.startRegister()
 		case "m":
 			node, ok := a.selectedNode()
 			if !ok {
@@ -111,6 +120,8 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 			a.input.Payload = node.ID
 			return nil
 		}
+	case screenDNS:
+		return a.handleDNSKey(key)
 	case screenKeys:
 		if key == "n" {
 			if !a.headscaleAnswers() {
@@ -303,4 +314,29 @@ func (a *app) selectedNode() (headscale.Node, bool) {
 		return headscale.Node{}, false
 	}
 	return a.hsState.Nodes[i], true
+}
+
+// firewallDoneMsg is tui-firewall handing the terminal back.
+type firewallDoneMsg struct{ err error }
+
+// launchFirewall hands the terminal to tui-firewall, the family's tool for
+// opening the ports the readiness line reports closed. Bubble Tea suspends
+// this program, tui-firewall draws on the real terminal, and this screen is
+// restored when it exits, then the ports are read again. It is not previewed
+// as a change because it is not one: tui-firewall previews and confirms
+// whatever it changes (issue #15).
+func (a *app) launchFirewall() tea.Cmd {
+	if !a.hsState.Firewall.Launchable {
+		a.setStatus(ui.StatusWarn, "tui-firewall is not installed · it comes from pkgs.tui.tools "+
+			"(the same repository as headscale)")
+		return nil
+	}
+	process, err := a.hs.LaunchFirewall()
+	if err != nil {
+		a.setStatus(ui.StatusError, err.Error())
+		return nil
+	}
+	a.busy = true
+	a.setStatusf(ui.StatusInfo, "running %s…", process)
+	return tea.Exec(process, func(err error) tea.Msg { return firewallDoneMsg{err: err} })
 }

@@ -69,6 +69,13 @@ func (a *app) hsInstallLines() []string {
 // cpEmptyMessage is what a control-plane screen shows when it has no rows.
 func (a *app) cpEmptyMessage() string {
 	hs := a.hsState
+	if a.screen == screenDNS {
+		reason := hs.ControlPlane.Error
+		if reason == "" {
+			reason = "it could not be read"
+		}
+		return headscale.HeadscaleConfigPath + " is not readable (" + reason + ") · run with sudo"
+	}
 	switch {
 	case hs.NotRunning:
 		// Nothing failed: the CLI was not asked, because the unit is stopped.
@@ -95,6 +102,7 @@ func (a *app) noteLines() []string {
 	note := a.theme.Muted.Render(ui.Truncate(controlPlaneNote, a.width))
 	switch a.screen {
 	case screenNodes:
+		lines = append(lines, a.registrationLines()...)
 		// The selected node's routes, spelled out: the table cell only has
 		// room for the counts.
 		if node, ok := a.selectedNode(); ok && len(headscale.NodeRoutes(node)) > 0 {
@@ -103,6 +111,10 @@ func (a *app) noteLines() []string {
 			return append(lines, note, a.theme.Muted.Render(ui.Truncate(routes, a.width)))
 		}
 		return append(lines, note)
+	case screenDNS:
+		return append(lines, a.theme.Muted.Render(ui.Truncate("dns: section of "+
+			headscale.HeadscaleConfigPath+" · every change is a diff of that file, then a "+
+			"restart", a.width)))
 	case screenUsers:
 		for _, line := range a.controlPlanePanel() {
 			lines = append(lines, a.theme.Muted.Render(ui.Truncate(line, a.width)))
@@ -258,6 +270,8 @@ func (a *app) cpTableData() ([]ui.Column, [][]string, []*lipgloss.Style) {
 		return a.nodesTable()
 	case screenKeys:
 		return a.keysTable()
+	case screenDNS:
+		return a.dnsTable()
 	}
 	return a.usersTable()
 }
@@ -355,11 +369,14 @@ func (a *app) cpHelpKeys() []ui.KeyHint {
 			{Key: "S", Desc: "server"}, {Key: "O", Desc: "oidc"},
 			{Key: "F", Desc: "fix owner"}}
 	case screenNodes:
-		return []ui.KeyHint{{Key: "r", Desc: "routes"},
+		return []ui.KeyHint{{Key: "r", Desc: "routes"}, {Key: "R", Desc: "register"},
 			{Key: "e", Desc: "expire"}, {Key: "m", Desc: "rename"},
 			{Key: "x", Desc: "delete"}}
 	case screenKeys:
 		return []ui.KeyHint{{Key: "n", Desc: "new key"}}
+	case screenDNS:
+		return []ui.KeyHint{{Key: "e", Desc: "edit"}, {Key: "n", Desc: "add"},
+			{Key: "x", Desc: "remove"}}
 	}
 	return nil
 }
@@ -422,4 +439,68 @@ func wordsOrDash(items []string) string {
 		return "-"
 	}
 	return strings.Join(items, " ")
+}
+
+// nextKey is the key that does the control plane's next missing step on the
+// current screen, or "" when that step is not done from here: the readiness
+// line names the step, and the hint bar leads with its key (issue #12).
+func (a *app) nextKey() string {
+	if !a.hsState.Present && a.screen.controlPlane() {
+		return "i"
+	}
+	if !a.hsState.Present {
+		return ""
+	}
+	r := headscale.ReadinessFor(a.hsState, time.Now())
+	if a.screen.controlPlane() && (r.Next == headscale.NextPorts ||
+		(r.Ports != nil && r.Ports.Node == headscale.PortClosed && r.Next == headscale.NextReady)) {
+		return "f"
+	}
+	switch r.Next {
+	case headscale.NextServer, headscale.NextUnit:
+		if a.screen == screenUsers {
+			return "S"
+		}
+	case headscale.NextIdentity:
+		switch a.screen {
+		case screenUsers:
+			return "O"
+		case screenKeys:
+			return "n"
+		}
+	case headscale.NextFirstNode:
+		switch {
+		case a.screen == screenNode && r.PendingRegistrations == 0:
+			return "j"
+		case a.screen == screenNodes && len(a.pendingRegistrations()) > 0:
+			return "R"
+		}
+	case headscale.NextRoutes:
+		if a.screen == screenNodes {
+			return "r"
+		}
+	}
+	return ""
+}
+
+// emphasizeNext moves the next step's key to the front of a hint list and
+// marks it, so the bar at the bottom says what the readiness line says.
+func (a *app) emphasizeNext(hints []ui.KeyHint) []ui.KeyHint {
+	next := a.nextKey()
+	if next == "" {
+		return hints
+	}
+	for i, h := range hints {
+		if h.Key != next {
+			continue
+		}
+		h.Desc += " ◂ next"
+		out := append([]ui.KeyHint{h}, hints[:i]...)
+		return append(out, hints[i+1:]...)
+	}
+	if next == "f" {
+		// f has no place in the bar until a port needs it.
+		return append([]ui.KeyHint{{Key: "f", Desc: "firewall ◂ next"}}, hints...)
+	}
+	return hints
 }

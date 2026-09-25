@@ -642,6 +642,9 @@ func firstLineOf(s string) string {
 // It is the tail of handleInput: everything the browse view's own actions do
 // not claim lands here.
 func (a *app) handleControlPlaneInput(purpose inputPurpose, value string) tea.Cmd {
+	if cmd, ok := a.handleDNSInput(purpose, value); ok {
+		return cmd
+	}
 	switch purpose {
 	case inputServerURL:
 		return a.tookServerURL(value)

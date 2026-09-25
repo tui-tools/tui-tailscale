@@ -67,9 +67,11 @@ screenshots: build
 		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
 		--budget 12 --rows 40 --window 1000,820 \
 		--screen node= --screen peers=2 \
-		--screen users=3 --screen nodes=4G --screen 'routes=4Gr\r' \
-		--screen 'join=j\r0123456789abcdef\r\r\r192.0.2.0/24\r\r' \
-		--screen 'login=Lyj\r\r\r\r\r\ry' \
+		--screen users=3 --screen nodes=4G --screen 'routes=4Gr\r' --screen dns=6 \
+		--screen 'join=j\r\r0123456789abcdef\r\r\r192.0.2.0/24\r\r' \
+		--screen profiles=j \
+		--screen 'trust=jnew\r\x15https://headscale.lab.internal\r/etc/tui-cert/ca.crt' \
+		--screen 'login=Lyj\r\r\r\r\r\r\ry' \
 		--screen exit=x --screen help=?
 
 ## readme: regenerate the generated README sections from tool.json.

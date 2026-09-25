@@ -1,0 +1,25 @@
+{
+  "tool": "tui-firewall",
+  "backend": "nftables",
+  "enabled": true,
+  "model": {
+    "Backend": "nftables",
+    "Enabled": true,
+    "Groups": [
+      {"Name": "ip filter / INPUT", "Default": {"Incoming": "allow"}, "Rules": [
+        {"Action": "JUMP TS-INPUT", "Direction": "IN", "Proto": "", "Ports": "", "From": "Anywhere", "Raw": "counter jump ts-input"},
+        {"Action": "ALLOW", "Direction": "IN", "Proto": "tcp", "Ports": "2222", "From": "Anywhere", "Raw": "tcp dport 2222 counter accept"},
+        {"Action": "ALLOW", "Direction": "IN", "Proto": "tcp", "Ports": "443", "From": "Anywhere", "Raw": "tcp dport 443 xt {\"name\":\"conntrack\",\"type\":\"match\"} counter accept"},
+        {"Action": "ALLOW", "Direction": "IN", "Proto": "", "Ports": "", "From": "Anywhere", "Raw": "xt {\"name\":\"conntrack\",\"type\":\"match\"} counter accept"},
+        {"Action": "ALLOW", "Direction": "IN", "Proto": "icmp", "Ports": "", "From": "Anywhere", "Raw": "ip protocol icmp counter accept"},
+        {"Action": "ALLOW", "Direction": "IN", "Proto": "", "Ports": "", "From": "Anywhere", "Raw": "iifname lo counter accept"},
+        {"Action": "ALLOW", "Direction": "IN", "Proto": "tcp", "Ports": "22", "From": "Anywhere", "Raw": "ip protocol tcp xt {\"name\":\"conntrack\",\"type\":\"match\"} tcp dport 22 counter accept"},
+        {"Action": "", "Direction": "IN", "Proto": "", "Ports": "", "From": "Anywhere", "Raw": "counter xt {\"name\":\"REJECT\",\"type\":\"target\"}"}
+      ]},
+      {"Name": "ip6 filter / INPUT", "Default": {"Incoming": "allow"}, "Rules": [
+        {"Action": "JUMP TS-INPUT", "Direction": "IN", "Proto": "", "Ports": "", "From": "Anywhere", "Raw": "counter jump ts-input"}
+      ]},
+      {"Name": "ip filter / OUTPUT", "Default": {"Outgoing": "allow"}, "Rules": []}
+    ]
+  }
+}

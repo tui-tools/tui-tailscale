@@ -256,6 +256,7 @@ func (a *app) tookACMEEmail(value string) tea.Cmd {
 
 // askCertPath opens the certificate step.
 func (a *app) askCertPath(value string, problem error) {
+	// FilePicker: tui-kit #23
 	a.openRetry(inputTLSCertPath, "Own certificate — tls_cert_path",
 		"/etc/headscale/tls/vpn.example.com.crt", value,
 		"The certificate (full chain) headscale serves. It has to be readable by "+
@@ -282,6 +283,7 @@ func (a *app) tookCertPath(value string) tea.Cmd {
 
 // askKeyPath opens the key step.
 func (a *app) askKeyPath(value string, problem error) {
+	// FilePicker: tui-kit #23
 	a.openRetry(inputTLSKeyPath, "Own certificate — tls_key_path",
 		"/etc/headscale/tls/vpn.example.com.key", value,
 		"The certificate's private key. Only its path is written to config.yaml; the "+

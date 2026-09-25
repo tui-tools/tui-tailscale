@@ -3,7 +3,7 @@
   "name": "tui-tailscale",
   "binary": "tui-tailscale",
   "tagline": "Self-hosted Tailscale from the terminal: the control plane and this node",
-  "description": "Self-hosted Tailscale from the terminal, both ends of it: the [Headscale](https://headscale.net) control plane on this host, and this machine as a tailnet node.\n\nThe node screens show the state, login server, addresses and routes, and the peers. `j` joins (this host's own control plane offered first), with an optional pre-auth key that never touches a command line; each setting is one `tailscale set`.\n\nThe control-plane screens list headscale's users, nodes and pre-auth keys under a panel showing what `/etc/headscale/config.yaml` says, with one line naming the next missing step. `S` sets the transport, `server_url` and `dns.base_domain`; `O` the identity provider (Google or any OIDC), its secret written to a root-only file; `F` fixes file ownership; `r` approves advertised routes. Each change to config.yaml is a minimal diff, confirmed, then a restart.\n\nWhen `tailscale` or `headscale` is absent, `i` installs it. `--demo` shows every screen with nothing installed.",
+  "description": "Self-hosted Tailscale from the terminal, both ends of it: the [Headscale](https://headscale.net) control plane on this host, and this machine as a tailnet node.\n\nThe node screens show the state, login server, addresses and routes, and the peers. `j` joins (this host's control plane offered first, join profiles pre-filling every step), with a pre-auth key that never touches a command line, and trusts a private CA when the server's certificate needs one.\n\nThe control-plane screens list headscale's users, nodes, nodes waiting to register, pre-auth keys and DNS, with one line naming the next missing step, the host firewall's ports included. `S` sets the transport, `O` the identity provider (Google or any OIDC), `r` approves routes, and the dns screen edits MagicDNS, nameservers, split DNS and records. Each change to config.yaml is a minimal diff, confirmed, then a restart.\n\nWhen `tailscale` or `headscale` is absent, `i` installs it. `--demo` shows every screen with nothing installed.",
   "category": "vpn",
   "homepage": "https://github.com/tui-tools/tui-tailscale",
   "repo": "https://github.com/tui-tools/tui-tailscale",
@@ -32,12 +32,24 @@
       "caption": "The control plane's nodes: owner, state and routes, the pending one spelled out for the selected router"
     },
     {
+      "path": "docs/screenshots/tui-tailscale-dns.png",
+      "caption": "The dns screen: MagicDNS, nameservers, a split domain and an extra record, each edited as a diff of config.yaml"
+    },
+    {
       "path": "docs/screenshots/tui-tailscale-routes.png",
       "caption": "Approving a node's advertised routes: what is approved and what is revoked, previewed"
     },
     {
       "path": "docs/screenshots/tui-tailscale-join.png",
       "caption": "A join previewed: the pre-auth key file, IP forwarding, tailscale up and the key file's removal, in one dialog"
+    },
+    {
+      "path": "docs/screenshots/tui-tailscale-profiles.png",
+      "caption": "j with join profiles: pick a saved preset and every step is pre-filled, still previewed"
+    },
+    {
+      "path": "docs/screenshots/tui-tailscale-trust.png",
+      "caption": "A login server signed by a private CA: j stops before tailscale up and asks for the CA to trust, then previews it"
     },
     {
       "path": "docs/screenshots/tui-tailscale-login.png",
@@ -54,12 +66,12 @@
   ],
   "keys": [
     {
-      "key": "tab / 1…5",
-      "action": "Switch screen (node, peers, and headscale's users, nodes, preauth keys)"
+      "key": "tab / 1…6",
+      "action": "Switch screen (node, peers, and headscale's users, nodes, preauth keys, dns)"
     },
     {
       "key": "j",
-      "action": "Join a tailnet: login server (this host's control plane offered), key, hostname, routes"
+      "action": "Join: login server, key, hostname, routes; from a join profile; trusts a private CA"
     },
     {
       "key": "a / A",
@@ -82,6 +94,10 @@
       "action": "Log out of the tailnet"
     },
     {
+      "key": "p",
+      "action": "Switch between tailscale's own login profiles"
+    },
+    {
       "key": "i",
       "action": "Install tailscale (node screens) or headscale (control-plane screens) when absent"
     },
@@ -98,12 +114,24 @@
       "action": "Fix ownership of headscale's state, secret and backup files (users screen)"
     },
     {
+      "key": "f",
+      "action": "Hand the terminal to tui-firewall to open a port readiness reports closed"
+    },
+    {
       "key": "r (nodes)",
       "action": "Approve / revoke a node's advertised routes (subnet router, exit node)"
     },
     {
+      "key": "R (nodes)",
+      "action": "Register a node waiting for its login, as a user"
+    },
+    {
       "key": "e / m / x (nodes)",
       "action": "Expire / rename / delete the selected headscale node"
+    },
+    {
+      "key": "e / n / x (dns)",
+      "action": "Edit a DNS setting / add a split domain or record / remove it"
     },
     {
       "key": "r / ctrl+r",
@@ -222,11 +250,11 @@
     }
   },
   "security": {
-    "needs_sudo": "Every change escalates, previewed first: tailscale up/set/down/logout, the key file under /run, IP forwarding, headscale's CLI, config.yaml, the OIDC secret file, its unit and the installs. The node is read as you; headscale's socket and config are root-only.",
+    "needs_sudo": "Every change escalates, previewed first: tailscale, the key file under /run, IP forwarding, the trust store, headscale's CLI, config.yaml, the OIDC secret, its unit and the installs. The node is read as you; headscale, its journal and the firewall are read as root.",
     "preview_before_run": true,
     "no_daemon": true,
     "no_network": false,
-    "no_network_note": "No connection of its own. On demand, previewed: the installs (i) fetch Tailscale's repository files or the tui-tools key (pinned fingerprint); O and --check --probe-issuer fetch the IdP's public discovery document, unprivileged.",
+    "no_network_note": "No connection of its own. On demand, previewed: the installs (i) fetch Tailscale's repository files or the tui-tools key (pinned fingerprint). Unprivileged reads: O and --probe-issuer fetch the IdP's discovery document; j checks the login server's certificate.",
     "static_binary": true,
     "signed_releases": true,
     "config_paths": [
@@ -250,6 +278,8 @@
     "oidc",
     "control-plane",
     "exit-node",
-    "subnet-router"
+    "subnet-router",
+    "split-dns",
+    "magicdns"
   ]
 }

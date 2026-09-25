@@ -144,6 +144,22 @@ type cpSummary struct {
 	// OIDC is configured. issuerReachable is only in it with --probe-issuer:
 	// a plain --check never goes on the network.
 	OIDCReadiness *headscale.OIDCReadiness `json:"oidcReadiness,omitempty"`
+	// DNS is the dns: section, resolved with headscale's defaults. Like the
+	// routes, its entries are counted rather than printed: nameservers, split
+	// domains and records are the addresses and names of the networks behind
+	// the tailnet. base_domain is the top-level baseDomain above.
+	DNS *dnsSummary `json:"dns,omitempty"`
+}
+
+// dnsSummary is the dns: section, reduced to switches and counts.
+type dnsSummary struct {
+	MagicDNS          bool `json:"magicDns"`
+	OverrideLocalDNS  bool `json:"overrideLocalDns"`
+	GlobalNameservers int  `json:"globalNameservers"`
+	SplitDomains      int  `json:"splitDomains"`
+	SearchDomains     int  `json:"searchDomains"`
+	ExtraRecords      int  `json:"extraRecords"`
+	ExtraRecordsPath  bool `json:"extraRecordsPath"`
 }
 
 // summariseHS reduces the control plane to counts.
@@ -199,6 +215,18 @@ func summariseHS(hs headscale.State, now time.Time) hsSummary {
 			Distro:   hsDistroLabel(hs),
 			Manager:  string(headscale.ManagerOf(hs.Distro)),
 			Commands: headscale.InstallInstructions(hs.Distro, hs.Repo),
+		}
+	}
+	if cp.Readable {
+		d := cp.DNS
+		summary.ControlPlane.DNS = &dnsSummary{
+			MagicDNS:          d.MagicDNS,
+			OverrideLocalDNS:  d.OverrideLocalDNS,
+			GlobalNameservers: len(d.Global),
+			SplitDomains:      len(d.Split),
+			SearchDomains:     len(d.SearchDomains),
+			ExtraRecords:      len(d.ExtraRecords),
+			ExtraRecordsPath:  d.ExtraRecordsPath != "",
 		}
 	}
 	if cp.Readable && cp.OIDC.Configured() {
