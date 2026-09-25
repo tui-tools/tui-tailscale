@@ -345,7 +345,7 @@ func TestInstallAddsThePinnedRepositoryFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := plan.Steps[len(plan.Steps)-1]
-	if last.String() != "env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y headscale" {
+	if last.String() != "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y headscale" {
 		t.Errorf("last step = %q", last)
 	}
 	if plan.Fingerprint != RepoFingerprint || plan.Steps[plan.Verify].Argv[0] != "gpg" {
@@ -371,7 +371,7 @@ func TestInstallWithTheRepositoryConfigured(t *testing.T) {
 		distro pkgmgr.Distro
 		want   []string
 	}{
-		"apt": {ubuntu(), []string{"env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update", "env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y headscale"}},
+		"apt": {ubuntu(), []string{"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update", "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y headscale"}},
 		"dnf": {pkgmgr.Distro{ID: "fedora", VersionID: "42"},
 			[]string{"dnf install -y headscale"}},
 		"omarchy": {pkgmgr.Distro{ID: "omarchy-server", Like: []string{"omarchy", "arch"}},
@@ -496,7 +496,7 @@ func TestMissingPaths(t *testing.T) {
 func TestBuildReinstall(t *testing.T) {
 	plan, err := BuildReinstall(ubuntu())
 	if err != nil || !plan.Reinstall || len(plan.Steps) != 1 ||
-		plan.Steps[0].String() != "env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install --reinstall -y -o "+
+		plan.Steps[0].String() != "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install --reinstall -y -o "+
 			"Dpkg::Options::=--force-confmiss headscale" {
 		t.Errorf("apt = %+v, %v", plan.Steps, err)
 	}

@@ -43,7 +43,6 @@ var timeouts = map[string]time.Duration{
 	"tailscale": 45 * time.Second,
 	"curl":      2 * time.Minute,
 	"apt-get":   10 * time.Minute,
-	"env":       10 * time.Minute,
 	"dnf":       10 * time.Minute,
 	"pacman":    10 * time.Minute,
 	"systemctl": time.Minute,
@@ -197,7 +196,12 @@ func (r *Real) Preview(cmd runner.Command) string {
 		// The binary is missing (curl before an install, say); show the
 		// honest argv with the prefix it would get.
 		if len(r.sudo) > 0 && escalates(cmd) {
-			return strings.Join(r.sudo, " ") + " " + cmd.String()
+			if len(cmd.Env) > 0 {
+				// As the kit's runner renders it: sudo resets the
+				// environment, so the variables go through env.
+				return runner.Join(r.sudo) + " env " + cmd.String()
+			}
+			return runner.Join(r.sudo) + " " + cmd.String()
 		}
 		return cmd.String()
 	}

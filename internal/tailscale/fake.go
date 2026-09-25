@@ -251,9 +251,6 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 	if len(cmd.Argv) == 0 {
 		return "", fmt.Errorf("malformed command %q", cmd)
 	}
-	// An apt-get step runs under env (issue #23): the fake applies what it
-	// wraps.
-	cmd.Argv = withoutEnv(cmd.Argv)
 	switch cmd.Argv[0] {
 	case "apt-get", "dnf", "pacman":
 		// The package install puts the client on the machine; tailscaled

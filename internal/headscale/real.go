@@ -53,9 +53,7 @@ var searchPaths = map[string][]string{
 	// add the tui-tools repository — gpg reads the downloaded key back and
 	// dearmours it, chmod and tee write the keyring and the repository file,
 	// rpm and pacman-key import the key.
-	"apt-get": {"/usr/bin/apt-get", "/bin/apt-get"},
-	// env runs apt-get with the non-interactive environment (install.go).
-	"env":        {"/usr/bin/env", "/bin/env"},
+	"apt-get":    {"/usr/bin/apt-get", "/bin/apt-get"},
 	"dnf":        {"/usr/bin/dnf", "/bin/dnf"},
 	"rpm":        {"/usr/bin/rpm", "/bin/rpm"},
 	"pacman":     {"/usr/bin/pacman", "/bin/pacman"},
@@ -127,7 +125,6 @@ var timeouts = map[string]time.Duration{
 	// sits on a network file system; it bounds its own read at a minute.
 	"tui-cert": 70 * time.Second,
 	"apt-get":  10 * time.Minute,
-	"env":      10 * time.Minute,
 	"dnf":      10 * time.Minute,
 	"rpm":      2 * time.Minute,
 	"pacman":   10 * time.Minute,
@@ -241,11 +238,21 @@ func (r *Real) Preview(cmd runner.Command) string {
 		// The binary is missing (headscale before its install, say); show the
 		// honest argv with the prefix it would get.
 		if len(r.sudo) > 0 && escalates(cmd) {
-			return strings.Join(r.sudo, " ") + " " + cmd.String()
+			return escalatedPreview(r.sudo, cmd)
 		}
 		return cmd.String()
 	}
 	return run.Preview(cmd)
+}
+
+// escalatedPreview is a command behind the escalation prefix, the way the
+// kit's runner renders it: its variables through env, since sudo resets the
+// environment.
+func escalatedPreview(sudo []string, cmd runner.Command) string {
+	if len(cmd.Env) > 0 {
+		return runner.Join(sudo) + " env " + cmd.String()
+	}
+	return runner.Join(sudo) + " " + cmd.String()
 }
 
 // Run executes a previewed command through its binary's runner.
