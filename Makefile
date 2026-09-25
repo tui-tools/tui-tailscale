@@ -70,7 +70,8 @@ screenshots: build
 		--screen users=3 --screen nodes=4G --screen 'routes=4Gr\r' --screen dns=6 \
 		--screen 'join=j\r\r0123456789abcdef\r\r\r192.0.2.0/24\r\r' \
 		--screen profiles=j \
-		--screen 'trust=jnew\r\x15https://headscale.lab.internal\r/etc/tui-cert/ca.crt' \
+		--screen 'trust=jnew\r\x15https://headscale.lab.internal\r' \
+		--screen 'pairs=3Stls_cert\r\r\r' --screen 'certfile=3Stls_cert\r\r\rother\rl' \
 		--screen 'login=Lyj\r\r\r\r\r\r\ry' \
 		--screen exit=x --screen help=?
 

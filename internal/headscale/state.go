@@ -163,4 +163,8 @@ type Backend interface {
 	// closed. It is not a change and is not previewed as one: tui-firewall
 	// previews and confirms whatever it changes.
 	LaunchFirewall() (Process, error)
+	// ReadLocalPKI reads the local CAs tui-cert keeps here and the pairs they
+	// issued — a read, unprivileged, with no confirm. tui-cert not being
+	// installed is an answer (Installed false), not an error.
+	ReadLocalPKI(ctx context.Context) LocalPKI
 }

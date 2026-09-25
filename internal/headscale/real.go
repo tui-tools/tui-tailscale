@@ -45,7 +45,10 @@ var searchPaths = map[string][]string{
 	// also what f hands the terminal to.
 	"tui-firewall": {"/usr/bin/tui-firewall", "/usr/local/bin/tui-firewall"},
 	"nft":          {"/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft"},
-	"iptables":     {"/usr/sbin/iptables", "/usr/bin/iptables", "/sbin/iptables"},
+	// tui-cert's --check lists the local CAs and the pairs they issued, for
+	// S's own-certificate step and j's CA step (see localca.go).
+	"tui-cert": {"/usr/bin/tui-cert", "/usr/local/bin/tui-cert"},
+	"iptables": {"/usr/sbin/iptables", "/usr/bin/iptables", "/sbin/iptables"},
 	// The companion install: the package manager, and the kit's steps that
 	// add the tui-tools repository — gpg reads the downloaded key back and
 	// dearmours it, chmod and tee write the keyring and the repository file,
@@ -79,6 +82,8 @@ var privilegedRead = map[string]bool{
 	"tui-firewall": true,
 	"nft":          true,
 	"iptables":     true,
+	// tui-cert reads certificates and CA certificates, which are public.
+	"tui-cert": false,
 }
 
 // escalates reports whether a command runs through the escalation prefix.
@@ -115,11 +120,14 @@ func hasArg(argv []string, token string) bool {
 // timeouts bounds each binary's runs. A package manager downloads, so it gets
 // minutes.
 var timeouts = map[string]time.Duration{
-	"curl":    2 * time.Minute,
-	"apt-get": 10 * time.Minute,
-	"dnf":     10 * time.Minute,
-	"rpm":     2 * time.Minute,
-	"pacman":  10 * time.Minute,
+	"curl": 2 * time.Minute,
+	// tui-cert walks the certificate directories, which is fast unless /etc
+	// sits on a network file system; it bounds its own read at a minute.
+	"tui-cert": 70 * time.Second,
+	"apt-get":  10 * time.Minute,
+	"dnf":      10 * time.Minute,
+	"rpm":      2 * time.Minute,
+	"pacman":   10 * time.Minute,
 }
 
 // installHints tell a user what to install when a binary is missing.

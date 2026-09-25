@@ -35,6 +35,8 @@ func (a *app) View() string {
 		return a.input.View(a.theme, a.width, a.height)
 	case modePicker:
 		return a.picker.View(a.theme, a.width, a.height)
+	case modeFilePicker:
+		return a.filePicker.View(a.theme, a.width, a.height)
 	case modeNotice:
 		return a.noticeView()
 	case modeHelp:

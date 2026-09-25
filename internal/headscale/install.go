@@ -147,8 +147,19 @@ func BuildInstall(d pkgmgr.Distro, repo RepoState) (Plan, error) {
 	case pkgmgr.ManagerPacman:
 		// Arch carries a headscale of its own; the repository-qualified name
 		// installs the family's source-built mirror whatever the repository
-		// order in pacman.conf. Arch supports no partial upgrade, so the
-		// family's convention is -Syu: the machine is upgraded with it.
+		// order in pacman.conf. The kit's install builders take tui-* names
+		// only, so the step is built here, following the kit's rule for the
+		// distribution: on Omarchy, whose pacman hook refuses a direct -Syu,
+		// a plain -S against the databases the repository setup (or the last
+		// `omarchy update`) synced; on Arch, which supports no partial
+		// upgrade, -Syu.
+		if d.Omarchy() {
+			plan.Steps = append(plan.Steps, runner.Command{
+				Argv:        []string{"pacman", "-S", "--needed", "--noconfirm", "tui-tools/" + PackageName},
+				Description: "Install headscale"})
+			body = append(body, pkgmgr.OmarchyNote)
+			break
+		}
 		plan.Steps = append(plan.Steps, runner.Command{
 			Argv:        []string{"pacman", "-Syu", "--needed", "--noconfirm", "tui-tools/" + PackageName},
 			Description: "Upgrade the system and install headscale"})

@@ -165,6 +165,10 @@ func run(args []string) error {
 
 	model := newApp(backend, hs, theme.New(), backendCompat)
 	model.profiles = profiles
+	if opts.demo {
+		// The file picker lists a made-up tree under --demo.
+		model.files = demoFiles()
+	}
 	// After a change the versions are probed again, so an install shows its
 	// version in the header without a restart.
 	model.probe = func() []compat.Result { return probeCompat(context.Background(), opts.demo) }

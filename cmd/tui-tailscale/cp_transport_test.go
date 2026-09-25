@@ -27,6 +27,7 @@ func fixtureApp(t *testing.T, fixture string) (*app, *headscale.Fake) {
 	fake.SetService("active", "enabled")
 	a := newApp(tailscale.NewFake(), fake, theme.New(), nil)
 	a.width, a.height = 120, 40
+	a.files = demoFiles()
 	state, err := fake.Load(t.Context())
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -225,32 +226,46 @@ func TestLetsEncryptFlow(t *testing.T) {
 	}
 }
 
-// TestOwnCertificateIsCheckedBeforeItIsWritten: the pair tui-cert keeps in its
-// root-only directory cannot be read by the service, which the form finds
-// out from this machine before writing anything; a copy the service can read
-// goes through.
+// TestOwnCertificateIsCheckedBeforeItIsWritten: without tui-cert the step is
+// the file picker, which says where a local CA comes from. The pair tui-cert
+// keeps in its root-only directory cannot be read by the service, which the
+// form finds out from this machine before writing anything; a copy the
+// service can read goes through.
 func TestOwnCertificateIsCheckedBeforeItIsWritten(t *testing.T) {
-	a, _ := fixtureApp(t, "")
+	a, fake := fixtureApp(t, "")
+	fake.SetLocalPKI(headscale.LocalPKI{})
 	a = startS(t, a, headscale.TransportOwnCert)
 	a = clearAndType(t, a, "https://headscale.example.com")
 	if got := a.input.Model.Value(); got != "0.0.0.0:443" {
 		t.Errorf("listen_addr prefill = %q", got)
 	}
-	a = enter(t, a)
-	a = clearAndType(t, a, "/etc/ssl/tui-cert/headscale.example.com.crt")
-	if got := a.input.Model.Value(); got != "/etc/ssl/tui-cert/headscale.example.com.key" {
-		t.Errorf("the key was not proposed next to the certificate: %q", got)
-	}
 	model, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	a = runPending(t, model.(*app), cmd)
+	if a.mode != modeFilePicker || a.inputPurpose != inputTLSCertPath {
+		t.Fatalf("no certificate picker (mode %d, purpose %d)", a.mode, a.inputPurpose)
+	}
+	if !strings.Contains(a.filePicker.Help, headscale.CertToolURL) {
+		t.Errorf("the picker does not say where a local CA comes from: %q", a.filePicker.Help)
+	}
+	a, _ = pasteFile(t, a, "/etc/ssl/tui-cert/headscale.example.com.crt")
+	if a.inputPurpose != inputTLSKeyPath ||
+		a.filePicker.Highlighted() != "/etc/ssl/tui-cert/headscale.example.com.key" {
+		t.Errorf("the key was not proposed next to the certificate: %q",
+			a.filePicker.Highlighted())
+	}
+	a, cmd = pasteFile(t, a, "/etc/ssl/tui-cert/headscale.example.com.key")
+	a = runPending(t, a, cmd)
 	if a.inputPurpose != inputTLSCertPath || !strings.Contains(a.status, "cannot be entered by headscale") {
 		t.Fatalf("an unreadable pair was not refused (purpose %d, status %q)",
 			a.inputPurpose, a.status)
 	}
+	if !strings.HasPrefix(a.filePicker.Help, "✗ ") {
+		t.Errorf("the picker does not say why it reopened: %q", a.filePicker.Help)
+	}
 
-	a = clearAndType(t, a, "/etc/headscale/tls/headscale.example.com.crt")
-	model, cmd = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	a = runPending(t, model.(*app), cmd)
+	a, _ = pasteFile(t, a, "/etc/headscale/tls/headscale.example.com.crt")
+	a, cmd = pasteFile(t, a, "/etc/headscale/tls/headscale.example.com.key")
+	a = runPending(t, a, cmd)
 	if a.inputPurpose != inputBaseDomain {
 		t.Fatalf("a readable pair did not move on (purpose %d, status %q)",
 			a.inputPurpose, a.status)
@@ -265,6 +280,64 @@ func TestOwnCertificateIsCheckedBeforeItIsWritten(t *testing.T) {
 		if !contains(added, want) {
 			t.Errorf("the diff is missing %q:\n%s", want, a.confirm.Body)
 		}
+	}
+}
+
+// TestOwnCertificateFromTuiCert: a pair tui-cert issued is offered by name
+// and taken whole, both paths at once, then checked like a picked one.
+func TestOwnCertificateFromTuiCert(t *testing.T) {
+	a, _ := fixtureApp(t, "")
+	a = startS(t, a, headscale.TransportOwnCert)
+	a = clearAndType(t, a, "https://headscale.example.com")
+	model, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = runPending(t, model.(*app), cmd)
+	if a.mode != modePicker || a.pickerPurpose != pickerIssuedPair {
+		t.Fatalf("no pair list (mode %d, status %q)", a.mode, a.status)
+	}
+	pair := headscale.DemoLocalPKI().Pairs[0]
+	if len(a.picker.Options) != 2 || a.picker.Options[1] != otherFile ||
+		!strings.HasPrefix(a.picker.Options[0],
+			"issued by homelab-ca · headscale.example.com (192.0.2.10) · expires ") {
+		t.Errorf("options = %q", a.picker.Options)
+	}
+	model, cmd = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = runPending(t, model.(*app), cmd)
+	if a.inputPurpose != inputBaseDomain {
+		t.Fatalf("the issued pair did not move on (purpose %d, status %q)",
+			a.inputPurpose, a.status)
+	}
+	a = enter(t, a)
+	_, added := diffLines(a)
+	for _, want := range []string{
+		`tls_cert_path: "` + pair.CertPath + `"`,
+		`tls_key_path: "` + pair.KeyPath + `"`,
+	} {
+		if !contains(added, want) {
+			t.Errorf("the diff is missing %q:\n%s", want, a.confirm.Body)
+		}
+	}
+}
+
+// TestOwnCertificateOtherFile: "other file…" is the way to the file picker
+// when tui-cert has pairs, and the picker then carries no hint.
+func TestOwnCertificateOtherFile(t *testing.T) {
+	a, _ := fixtureApp(t, "")
+	a = startS(t, a, headscale.TransportOwnCert)
+	a = clearAndType(t, a, "https://headscale.example.com")
+	model, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = runPending(t, model.(*app), cmd)
+	a = pick(t, a, otherFile)
+	if a.mode != modeFilePicker || a.inputPurpose != inputTLSCertPath {
+		t.Fatalf("no certificate picker (mode %d)", a.mode)
+	}
+	if strings.Contains(a.filePicker.Help, headscale.CertTool) {
+		t.Errorf("a hint about tui-cert where it has pairs: %q", a.filePicker.Help)
+	}
+	// esc leaves the form, and nothing is written.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = model.(*app)
+	if a.mode != modeBrowse || a.status != "cancelled" {
+		t.Errorf("mode %d, status %q", a.mode, a.status)
 	}
 }
 

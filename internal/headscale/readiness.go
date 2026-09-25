@@ -78,7 +78,7 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		}
 	}
 	if h.Present && h.Firewall.Source != "" && r.ServerConfigured {
-		ports := PortsFor(h.Firewall, cp.ServerURL)
+		ports := PortsFor(h.Firewall, cp.ServerURL, cp.ListenAddr)
 		r.Ports = &ports
 	}
 	r.FirstNode = len(h.Nodes) > 0

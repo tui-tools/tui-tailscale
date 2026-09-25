@@ -3,7 +3,7 @@
   "name": "tui-tailscale",
   "binary": "tui-tailscale",
   "tagline": "Self-hosted Tailscale from the terminal: the control plane and this node",
-  "description": "Self-hosted Tailscale from the terminal, both ends of it: the [Headscale](https://headscale.net) control plane on this host, and this machine as a tailnet node.\n\nThe node screens show the state, login server, addresses and routes, and the peers. `j` joins (this host's control plane offered first, join profiles pre-filling every step), with a pre-auth key that never touches a command line, and trusts a private CA when the server's certificate needs one.\n\nThe control-plane screens list headscale's users, nodes, nodes waiting to register, pre-auth keys and DNS, with one line naming the next missing step, the host firewall's ports included. `S` sets the transport, `O` the identity provider (Google or any OIDC), `r` approves routes, and the dns screen edits MagicDNS, nameservers, split DNS and records. Each change to config.yaml is a minimal diff, confirmed, then a restart.\n\nWhen `tailscale` or `headscale` is absent, `i` installs it. `--demo` shows every screen with nothing installed.",
+  "description": "Self-hosted Tailscale from the terminal, both ends of it: the [Headscale](https://headscale.net) control plane on this host, and this machine as a tailnet node.\n\nThe node screens show the state, login server, addresses and routes, and the peers. `j` joins (this host's control plane offered first, join profiles pre-filling every step), with a pre-auth key that never touches a command line, and trusts a private CA when the server's certificate needs one, offering the CAs tui-cert keeps here.\n\nThe control-plane screens list headscale's users, nodes, nodes waiting to register, pre-auth keys and DNS, with one line naming the next missing step, the host firewall's ports included. `S` sets the transport (an own certificate picked from the pairs tui-cert issued), `O` the identity provider (Google or any OIDC), `r` approves routes, and the dns screen edits MagicDNS, nameservers, split DNS and records. Each change to config.yaml is a minimal diff, confirmed, then a restart.\n\nWhen `tailscale` or `headscale` is absent, `i` installs it. `--demo` shows every screen with nothing installed.",
   "category": "vpn",
   "homepage": "https://github.com/tui-tools/tui-tailscale",
   "repo": "https://github.com/tui-tools/tui-tailscale",
@@ -36,6 +36,14 @@
       "caption": "The dns screen: MagicDNS, nameservers, a split domain and an extra record, each edited as a diff of config.yaml"
     },
     {
+      "path": "docs/screenshots/tui-tailscale-pairs.png",
+      "caption": "S with an own certificate: the pairs tui-cert's local CA issued, offered by name, both paths at once"
+    },
+    {
+      "path": "docs/screenshots/tui-tailscale-certfile.png",
+      "caption": "The file picker, for a certificate from anywhere else: a listing filtered to .pem and .crt, or a typed path"
+    },
+    {
       "path": "docs/screenshots/tui-tailscale-routes.png",
       "caption": "Approving a node's advertised routes: what is approved and what is revoked, previewed"
     },
@@ -49,7 +57,7 @@
     },
     {
       "path": "docs/screenshots/tui-tailscale-trust.png",
-      "caption": "A login server signed by a private CA: j stops before tailscale up and asks for the CA to trust, then previews it"
+      "caption": "A login server signed by a private CA: j stops before tailscale up and offers the CAs tui-cert keeps here, then previews trusting one"
     },
     {
       "path": "docs/screenshots/tui-tailscale-login.png",
@@ -71,7 +79,7 @@
     },
     {
       "key": "j",
-      "action": "Join: login server, key, hostname, routes; from a join profile; trusts a private CA"
+      "action": "Join: server, key, hostname, routes; from a profile; trusts a private CA (tui-cert's)"
     },
     {
       "key": "a / A",
@@ -107,7 +115,7 @@
     },
     {
       "key": "S / O",
-      "action": "Control plane (users screen): server and transport / OIDC provider (Google, generic)"
+      "action": "Control plane: server and transport (tui-cert's pairs) / OIDC provider"
     },
     {
       "key": "F",
@@ -281,5 +289,6 @@
     "subnet-router",
     "split-dns",
     "magicdns"
-  ]
+  ],
+  "stability": "beta"
 }

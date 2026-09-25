@@ -4,15 +4,21 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/runner"
 	"github.com/tui-tools/tui-kit/theme"
+	"github.com/tui-tools/tui-kit/ui"
 	"github.com/tui-tools/tui-tailscale/internal/headscale"
 	"github.com/tui-tools/tui-tailscale/internal/tailscale"
 )
+
+// The tests drive the model synchronously, and the running tick sleeps a
+// second: it schedules nothing here. TestRunningMessage drives it by hand.
+func init() { runningTick = func() tea.Cmd { return nil } }
 
 // newTestApp builds the app on the demo backend and loads it synchronously.
 func newTestApp(t *testing.T) (*app, *tailscale.Fake) {
@@ -20,6 +26,7 @@ func newTestApp(t *testing.T) (*app, *tailscale.Fake) {
 	fake := tailscale.NewFake()
 	a := newApp(fake, headscale.NewFake(), theme.New(), nil)
 	a.width, a.height = 120, 40
+	a.files = demoFiles()
 	a.Update(a.load()())
 	return a, fake
 }
@@ -61,9 +68,10 @@ func settle(a *app, msg tea.Msg) {
 		next := queue[0]
 		queue = queue[1:]
 		_, cmd := a.Update(next)
-		if a.mode == modeInput {
-			// An open text input only ever returns its cursor blink, a
-			// command that sleeps; nothing the app acts on comes from it.
+		if a.mode == modeInput || a.mode == modeFilePicker {
+			// An open text input (the file picker's path field is one) only
+			// ever returns its cursor blink, a command that sleeps; nothing
+			// the app acts on comes from it.
 			continue
 		}
 		queue = append(queue, drain(cmd)...)
@@ -289,6 +297,29 @@ func TestAdvertiseRoutesAddsForwarding(t *testing.T) {
 	}
 }
 
+// The status line after an offer says what is left to do, not sysctl's echo
+// of the forwarding it turned on.
+func TestRoutingOfferStatusLine(t *testing.T) {
+	cases := []struct {
+		plan tailscale.Plan
+		want string
+	}{
+		{tailscale.Plan{Action: tailscale.ActionAdvertiseExitNode,
+			Steps: make([]runner.Command, 3)}, "exit node offered · approve it on the control plane"},
+		{tailscale.Plan{Action: tailscale.ActionAdvertiseExitNode,
+			Steps: make([]runner.Command, 1)}, "no longer offered as an exit node"},
+		{tailscale.Plan{Action: tailscale.ActionAdvertiseRoutes,
+			Steps: make([]runner.Command, 3)}, "routes advertised · approve them on the control plane"},
+	}
+	for _, tc := range cases {
+		a, _ := newTestApp(t)
+		a.planResult(planRanMsg{plan: tc.plan, output: "net.ipv4.ip_forward = 1\n"})
+		if a.status != tc.want {
+			t.Errorf("%s: status = %q, want %q", tc.plan.Action, a.status, tc.want)
+		}
+	}
+}
+
 func TestDownThenUp(t *testing.T) {
 	a, _ := newTestApp(t)
 	press(t, a, "u")
@@ -452,4 +483,32 @@ func changes(fake *tailscale.Fake) []runner.Command {
 		out = append(out, cmd)
 	}
 	return out
+}
+
+// While a plan runs, the status line names it and counts the time, and the
+// count stops with the plan.
+func TestRunningMessage(t *testing.T) {
+	a, _ := newTestApp(t)
+	press(t, a, "E")
+	if a.mode != modeConfirm {
+		t.Fatalf("mode = %v", a.mode)
+	}
+	title := a.confirm.Title
+	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	a = model.(*app)
+	if a.running != title || a.status != title+": running… 0s" {
+		t.Fatalf("running %q, status %q", a.running, a.status)
+	}
+	a.runningSince = a.runningSince.Add(-65 * time.Second)
+	a.Update(ui.RunningTickMsg{})
+	if a.status != title+": running… 1m05s" {
+		t.Errorf("status = %q", a.status)
+	}
+	a.Update(planRanMsg{plan: tailscale.Plan{Title: title}})
+	if a.running != "" {
+		t.Error("the plan returned and the count goes on")
+	}
+	if _, cmd := a.Update(ui.RunningTickMsg{}); cmd != nil {
+		t.Error("a tick after the plan schedules another")
+	}
 }

@@ -9,31 +9,25 @@ import (
 )
 
 // A login server whose certificate does not verify stops the join at the CA
-// step; trusting the CA (previewed per distribution) checks again and goes on
-// with the key.
+// step, which offers the CAs tui-cert keeps here first; trusting one
+// (previewed per distribution) checks again and goes on with the key.
 func TestJoinTrustsAPrivateCA(t *testing.T) {
 	a, fake := newTestApp(t)
 	press(t, a, "j")
 	typeText(a, tailscale.DemoPrivateServer)
 	press(t, a, "enter")
-	if a.mode != modeInput || a.inputPurpose != inputJoinCA {
-		t.Fatalf("mode %v / %v, status %q: want the CA step", a.mode, a.inputPurpose, a.status)
+	if a.mode != modePicker || a.pickerPurpose != pickerJoinCA {
+		t.Fatalf("mode %v / %v, status %q: want the CA list", a.mode, a.pickerPurpose, a.status)
 	}
-	if !strings.Contains(a.input.Help, "does not verify") ||
-		!strings.Contains(a.input.Help, "unable to get local issuer") {
-		t.Errorf("help = %q", a.input.Help)
+	if len(a.picker.Options) != 2 || !strings.HasPrefix(a.picker.Options[0],
+		"homelab-ca · SHA-256 CC:70:FC:C3 · expires ") || a.picker.Options[1] != otherFile {
+		t.Errorf("options = %q", a.picker.Options)
 	}
-	typeText(a, "relative/ca.crt")
-	press(t, a, "enter")
-	if a.inputPurpose != inputJoinCA || !strings.Contains(a.input.Help, "not an absolute") {
-		t.Fatalf("a relative path was taken: %q", a.input.Help)
-	}
-	typeText(a, "/etc/tui-cert/ca.crt")
 	press(t, a, "enter")
 	if a.mode != modeConfirm {
 		t.Fatalf("mode = %v, want the trust preview", a.mode)
 	}
-	want := "sudo -n install -m 644 /etc/tui-cert/ca.crt " +
+	want := "sudo -n install -m 644 /etc/tui-cert/ca/homelab-ca/ca.crt " +
 		"/usr/local/share/ca-certificates/tui-tailscale-headscale.lab.internal.crt\n" +
 		"$ sudo -n update-ca-certificates\n$ sudo -n systemctl restart tailscaled"
 	if a.confirm.Command != want {
@@ -48,6 +42,40 @@ func TestJoinTrustsAPrivateCA(t *testing.T) {
 	}
 	if len(changes(fake)) != 3 {
 		t.Errorf("ran %q", changes(fake))
+	}
+}
+
+// Without tui-cert the CA step is the file picker, which says why the
+// certificate failed and where a local CA comes from; it opens where
+// tui-cert's export copies a CA to.
+func TestJoinCAFromAFile(t *testing.T) {
+	a, _ := newTestApp(t)
+	a.hs.(*headscale.Fake).SetLocalPKI(headscale.LocalPKI{})
+	press(t, a, "j")
+	typeText(a, tailscale.DemoPrivateServer)
+	press(t, a, "enter")
+	if a.mode != modeFilePicker || a.inputPurpose != inputJoinCA {
+		t.Fatalf("mode %v / %v, status %q: want the CA picker", a.mode, a.inputPurpose, a.status)
+	}
+	help := a.filePicker.Help
+	for _, want := range []string{"does not verify", "unable to get local issuer",
+		headscale.CertToolURL} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help is missing %q: %q", want, help)
+		}
+	}
+	if a.filePicker.Dir != localCADir {
+		t.Errorf("the picker opened in %q", a.filePicker.Dir)
+	}
+	a, _ = pasteFile(t, a, "/home/user/notes.txt")
+	if a.mode != modeFilePicker || !strings.Contains(a.filePicker.Message(), ".pem") {
+		t.Errorf("a file of the wrong kind was taken (mode %v, message %q)",
+			a.mode, a.filePicker.Message())
+	}
+	a, _ = pasteFile(t, a, "/home/user/homelab-ca.crt")
+	if a.mode != modeConfirm || !strings.Contains(a.confirm.Command,
+		"install -m 644 /home/user/homelab-ca.crt ") {
+		t.Fatalf("mode = %v, preview %q", a.mode, a.confirm.Command)
 	}
 }
 
