@@ -55,6 +55,9 @@ type State struct {
 	Users        []User       `json:"users"`
 	Nodes        []Node       `json:"nodes"`
 	PreAuthKeys  []PreAuthKey `json:"preAuthKeys"`
+	// Registrations are the nodes waiting for their login to be confirmed,
+	// read from headscale's journal (see registrations.go).
+	Registrations []Registration `json:"-"`
 
 	// Distro and Repo are what the companion install needs when headscale is
 	// absent: the distribution, and whether the tui-tools repository — the

@@ -43,6 +43,10 @@ type Readiness struct {
 	PreAuthKey     bool `json:"preAuthKey"`
 	// FirstNode is the fourth: at least one node is registered.
 	FirstNode bool `json:"firstNode"`
+	// PendingRegistrations counts the nodes waiting for their login to be
+	// confirmed (read from headscale's journal): the first node usually
+	// shows up here before it shows up in the node list.
+	PendingRegistrations int `json:"pendingRegistrations"`
 	// RoutesPending counts the advertised routes nobody approved yet, an exit
 	// node counting as one; RoutesApproved is the last step, none pending.
 	RoutesPending  int  `json:"routesPending"`
@@ -69,6 +73,7 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		}
 	}
 	r.FirstNode = len(h.Nodes) > 0
+	r.PendingRegistrations = len(h.Registrations)
 	for _, n := range h.Nodes {
 		r.RoutesPending += pendingRoutes(n)
 	}
@@ -92,6 +97,10 @@ func ReadinessFor(h State, now time.Time) Readiness {
 		r.Next = NextIdentity
 		r.NextStep = "no way to log in yet · O sets up an identity provider, or n on " +
 			"the keys screen creates a pre-auth key"
+	case !r.FirstNode && r.PendingRegistrations > 0:
+		r.Next = NextFirstNode
+		r.NextStep = "a node is waiting to register · R on the nodes screen registers it " +
+			"as a user, or open its /register URL in a browser"
 	case !r.FirstNode:
 		r.Next = NextFirstNode
 		r.NextStep = "no node yet · j on the node screen joins this host (or " +

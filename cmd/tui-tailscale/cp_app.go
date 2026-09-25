@@ -105,6 +105,8 @@ func (a *app) handleControlPlaneKey(key string) tea.Cmd {
 				return a.warnNothing()
 			}
 			return a.startApproveRoutes(node)
+		case "R":
+			return a.startRegister()
 		case "m":
 			node, ok := a.selectedNode()
 			if !ok {

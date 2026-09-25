@@ -104,6 +104,9 @@ const (
 	pickerDNSMagic
 	pickerDNSOverride
 	pickerDNSNew
+	// R's two questions: which waiting registration, as which user.
+	pickerRegistration
+	pickerRegisterUser
 )
 
 // pickerYes and pickerNo are the two options of a boolean picker; noExitNode
@@ -190,6 +193,10 @@ type app struct {
 	cpDraft controlPlaneDraft
 	// dnsDraft is the dns section as the open dns step would leave it.
 	dnsDraft dnsDraft
+	// registerDraft is the registration R is registering; registered the
+	// ones this session registered, which the journal still logs as started.
+	registerDraft string
+	registered    map[string]bool
 	// after, when set, runs once on the next successful control-plane
 	// command. It is how the control plane's multi-step flows chain — the
 	// secret, then config.yaml, then the restart — each step its own confirm.
@@ -287,6 +294,7 @@ func newApp(backend tailscale.Backend, hs headscale.Backend, th theme.Theme,
 	a := &app{backend: backend, hs: hs, theme: th,
 		backendCompat: compatFor(probed, backendName),
 		hsCompat:      compatFor(probed, backendHeadscale),
+		registered:    map[string]bool{},
 		width:         80, height: 24, loading: true}
 	if th.Warning != "" {
 		a.setStatus(ui.StatusWarn, th.Warning)
@@ -741,6 +749,7 @@ func (a *app) cancelled() {
 	a.exitChoices = nil
 	a.profileChoices = nil
 	a.saveDraft = tailscale.JoinProfile{}
+	a.registerDraft = ""
 	a.cpDraft.forgetSecret()
 	a.setStatus(ui.StatusInfo, "cancelled")
 }
@@ -793,6 +802,10 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.tookDNSOverride(choice == pickerYes)
 	case pickerDNSNew:
 		return a, a.tookDNSNew(choice)
+	case pickerRegistration:
+		return a, a.tookRegistration(choice)
+	case pickerRegisterUser:
+		return a, a.tookRegisterUser(choice)
 	}
 	return a, nil
 }

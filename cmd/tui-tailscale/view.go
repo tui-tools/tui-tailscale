@@ -504,7 +504,7 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 		if a.screen == screenNodes {
 			reload = "ctrl+r"
 		}
-		return append(append(hints, a.cpHelpKeys()...),
+		return append(append(hints, a.emphasizeNext(a.cpHelpKeys())...),
 			ui.KeyHint{Key: reload, Desc: "reload"},
 			ui.KeyHint{Key: "?", Desc: "help"},
 			ui.KeyHint{Key: "q", Desc: "quit"})
@@ -512,12 +512,14 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 	if !a.state.Installed && !a.loading {
 		hints = append(hints, ui.KeyHint{Key: "i", Desc: "install"})
 	} else {
+		var actions []ui.KeyHint
 		for _, spec := range tailscale.Actions {
 			if spec.Action == tailscale.ActionInstall {
 				continue
 			}
-			hints = append(hints, ui.KeyHint{Key: spec.Key, Desc: spec.Label})
+			actions = append(actions, ui.KeyHint{Key: spec.Key, Desc: spec.Label})
 		}
+		hints = append(hints, a.emphasizeNext(actions)...)
 	}
 	return append(hints,
 		ui.KeyHint{Key: "r", Desc: "reload"},
@@ -549,6 +551,7 @@ func helpKeys() []ui.KeyHint {
 		ui.KeyHint{Key: "", Desc: "config.yaml, then a restart (or an enable)"},
 		ui.KeyHint{Key: "F", Desc: "fix the ownership of headscale's files (users)"},
 		ui.KeyHint{Key: "r", Desc: "approve or revoke a node's advertised routes (nodes)"},
+		ui.KeyHint{Key: "R", Desc: "register a node waiting for its login, as a user (nodes)"},
 		ui.KeyHint{Key: "e / m / x", Desc: "expire / rename / delete the selected node (nodes)"},
 		ui.KeyHint{Key: "e / n / x", Desc: "edit the selected setting / add a split domain or a"},
 		ui.KeyHint{Key: "", Desc: "record / remove it (dns): a diff of config.yaml, then a restart"},

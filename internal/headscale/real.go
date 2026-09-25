@@ -36,6 +36,9 @@ var searchPaths = map[string][]string{
 	// writes for it; chown is the previewed fix when the answer is wrong.
 	"stat":  {"/usr/bin/stat", "/bin/stat"},
 	"chown": {"/usr/bin/chown", "/bin/chown"},
+	// journalctl reads headscale's recent log for the registrations it keeps
+	// nowhere else (see registrations.go).
+	"journalctl": {"/usr/bin/journalctl", "/bin/journalctl"},
 	// The companion install: the package manager, and the kit's steps that
 	// add the tui-tools repository — gpg reads the downloaded key back and
 	// dearmours it, chmod and tee write the keyring and the repository file,
@@ -63,6 +66,8 @@ var privilegedRead = map[string]bool{
 	// The state directory is mode 750 and owned by the service account, so
 	// only root can see inside it.
 	"stat": true,
+	// A system unit's journal is readable by root and the adm group only.
+	"journalctl": true,
 }
 
 // escalates reports whether a command runs through the escalation prefix.
@@ -269,7 +274,23 @@ func (r *Real) Load(ctx context.Context) (State, error) {
 		}
 	}
 	state.OIDCInferred = InferOIDC(state.Users, state.Nodes)
+	state.Registrations = r.registrations(ctx)
 	return state, nil
+}
+
+// registrations reads the pending registrations from headscale's journal. A
+// host without journald, or a journal this user cannot read, has none to
+// show; that is not an error of the control plane.
+func (r *Real) registrations(ctx context.Context) []Registration {
+	run, err := r.runnerFor("journalctl", true)
+	if err != nil {
+		return nil
+	}
+	out, err := run.Read(ctx, JournalArgv()...)
+	if err != nil {
+		return nil
+	}
+	return ParseRegistrations(out, time.Now())
 }
 
 // loadControlPlane reads headscale's own configuration and the state of its

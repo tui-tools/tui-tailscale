@@ -47,6 +47,7 @@ The guided path from an empty host to a working tailnet, with this host as both 
    With Google, the preset needs `server_url` on https with a DNS name, because Google refuses a redirect URI that is plain http or an IP address; register `https://vpn.example.com/oidc/callback` as the OAuth client's redirect URI. headscale applies the allow lists as AND: a login has to match every list that is not empty, so with `allowed_domains: [example.com]` an address from another domain is refused even when `allowed_users` names it. `allowed_users: [user@example.com]` alone lets exactly that person in.
 4. **Install tailscale.** Back on the node screen (`1`), `i` installs the client from Tailscale's own package repository and starts `tailscaled`.
 5. **Join.** `j` offers this host's control plane as the login server. Paste the pre-auth key, or leave it empty and open the login URL the tool shows in any browser to log in through the IdP. Advertise `10.0.0.0/16` to make this host a subnet router; the same preview turns IP forwarding on.
+   If the join seems to hang, look at the nodes screen (`4`): a node that started its registration and has not logged in yet is listed there as waiting, with the URL that finishes it, and `R` registers it without a browser.
 6. **Approve the routes.** On the nodes screen (`4`), select this host and press `r`: the list is prefilled with what it advertises, so approving it is one keystroke.
 7. **Join the clients.** On every other machine, join with routes accepted, so it reaches `10.0.0.0/16` through this host:
 
@@ -151,10 +152,16 @@ A control plane comes up in an order, and each step only makes sense once the on
 | server | `server_url` is set, valid and not loopback, and `dns.base_domain` is one headscale will start with | `S` sets the transport, `server_url` and `base_domain` |
 | unit | the unit is running, and enabled at boot | how to start it, or that `S` and `O` end with the enable |
 | identity | OIDC is configured, or a pre-auth key can still register a machine | `O` sets up an identity provider, or `n` on the keys screen creates a key |
-| first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine |
+| first node | a node is registered | `j` on the node screen joins this host, or `tailscale up --login-server=…` on another machine; when a node is already waiting for its login, `R` on the nodes screen registers it |
 | routes | no advertised route waits for approval | `routes pending approval (N)` — `r` on the nodes screen |
 
-`--check` carries the same answer as `headscale.readiness`: each step as a boolean (`serverConfigured`, `unitRunning`, `unitEnabled`, `oidcConfigured`, `preAuthKey`, `firstNode`, `routesApproved`, with `routesPending` counted), `next` naming the first missing one, and `nextStep` the sentence.
+The hint bar at the bottom says the same: on the screen where the next step is done, its key comes first, marked `◂ next` (`S` on the users screen while the server is not set up, `j` on the node screen while there is no node, `r` on the nodes screen while routes wait).
+
+`--check` carries the same answer as `headscale.readiness`: each step as a boolean (`serverConfigured`, `unitRunning`, `unitEnabled`, `oidcConfigured`, `preAuthKey`, `firstNode`, `routesApproved`, with `routesPending` and `pendingRegistrations` counted), `next` naming the first missing one, and `nextStep` the sentence.
+
+### Nodes waiting to register (`R` on the nodes screen)
+
+A client that runs `tailscale up --login-server=…` without a key starts a registration that headscale keeps in a cache for 15 minutes and nowhere else: `headscale nodes list` does not show it, and the client may print nothing at all (a stale identity from another control plane does that). headscale does log it, so the tool reads the unit's journal of the last 15 minutes (`journalctl -u headscale`, escalated) and lists every registration started there and not confirmed yet. The nodes screen says how many are waiting and prints the newest one's `/register/<id>` URL on a line of its own, for a browser; `R` finishes it from here instead, as a user you pick: `headscale auth register --auth-id <id> --user <user>` on headscale 0.29 and later, `headscale nodes register --key <id> --user <user>` before. `--check` counts them (`pendingRegistrations`) and prints neither the ids nor the URLs.
 
 ### Install headscale (`i` on a control-plane screen)
 
