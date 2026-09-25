@@ -456,26 +456,26 @@ func (a *app) nextKey() string {
 		(r.Ports != nil && r.Ports.Node == headscale.PortClosed && r.Next == headscale.NextReady)) {
 		return "f"
 	}
-	switch {
-	case r.Next == headscale.NextServer || r.Next == headscale.NextUnit:
+	switch r.Next {
+	case headscale.NextServer, headscale.NextUnit:
 		if a.screen == screenUsers {
 			return "S"
 		}
-	case r.Next == headscale.NextIdentity:
+	case headscale.NextIdentity:
 		switch a.screen {
 		case screenUsers:
 			return "O"
 		case screenKeys:
 			return "n"
 		}
-	case r.Next == headscale.NextFirstNode:
+	case headscale.NextFirstNode:
 		switch {
 		case a.screen == screenNode && r.PendingRegistrations == 0:
 			return "j"
 		case a.screen == screenNodes && len(a.pendingRegistrations()) > 0:
 			return "R"
 		}
-	case r.Next == headscale.NextRoutes:
+	case headscale.NextRoutes:
 		if a.screen == screenNodes {
 			return "r"
 		}

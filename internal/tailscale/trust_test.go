@@ -8,11 +8,11 @@ import (
 
 func TestClassifyTLSCheck(t *testing.T) {
 	for text, want := range map[string]TLSCheck{
-		"curl: (60) SSL certificate problem: unable to get local issuer certificate": TLSUntrusted,
+		"curl: (60) SSL certificate problem: unable to get local issuer certificate":  TLSUntrusted,
 		"curl: (60) SSL certificate problem: self-signed certificate":                 TLSUntrusted,
-		"curl: (60) SSL: no alternative certificate subject name matches target host":  TLSMismatch,
-		"curl: (6) Could not resolve host: headscale.example.com":                      TLSUnreachable,
-		"curl: (28) Connection timed out after 8001 milliseconds":                      TLSUnreachable,
+		"curl: (60) SSL: no alternative certificate subject name matches target host": TLSMismatch,
+		"curl: (6) Could not resolve host: headscale.example.com":                     TLSUnreachable,
+		"curl: (28) Connection timed out after 8001 milliseconds":                     TLSUnreachable,
 	} {
 		if got := ClassifyTLSCheck(text, errors.New("exit status")); got != want {
 			t.Errorf("%q = %s, want %s", text, got, want)

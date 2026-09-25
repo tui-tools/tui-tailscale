@@ -60,7 +60,7 @@ func TestDNSAddSplitDomain(t *testing.T) {
 	if a.mode != modeConfirm || !strings.Contains(a.confirm.Command, "systemctl restart headscale") {
 		t.Fatalf("no restart after the write: %q", a.confirm.Command)
 	}
-	a = confirmAndRun(t, a)
+	confirmAndRun(t, a)
 	state, _ := fake.Load(t.Context())
 	if len(state.ControlPlane.DNS.Split) != 2 {
 		t.Errorf("split after = %+v", state.ControlPlane.DNS.Split)
@@ -83,7 +83,7 @@ func TestDNSEditRecord(t *testing.T) {
 	a.input.Model.SetValue("")
 	a = typeAndEnter(t, a, "grafana.tailnet.example.com A 100.64.0.4")
 	a = confirmAndRun(t, a)
-	a = confirmAndRun(t, a)
+	confirmAndRun(t, a)
 	state, _ := fake.Load(t.Context())
 	if r := state.ControlPlane.DNS.ExtraRecords; len(r) != 1 || r[0].Value != "100.64.0.4" {
 		t.Errorf("records after = %+v", r)
@@ -105,7 +105,7 @@ func TestDNSRemove(t *testing.T) {
 		t.Fatalf("diff + %q", added)
 	}
 	a = confirmAndRun(t, a)
-	a = confirmAndRun(t, a)
+	confirmAndRun(t, a)
 	state, _ := fake.Load(t.Context())
 	if len(state.ControlPlane.DNS.Split) != 0 {
 		t.Error("the split domain was not removed")
