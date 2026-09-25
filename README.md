@@ -137,7 +137,8 @@ When `tailscale` is absent, the node screen says how to install it on this distr
 
 - **Ubuntu and Debian**: Tailscale's signing key and apt source list for the release's codename, fetched from pkgs.tailscale.com into `/usr/share/keyrings` and `/etc/apt/sources.list.d`, then `apt-get update` and `apt-get install -y tailscale`.
 - **Fedora** (and the RHEL rebuilds): Tailscale's `.repo` file fetched into `/etc/yum.repos.d` — the file `dnf config-manager --add-repo` would add, written in the way that works with both dnf4 and dnf5 — then `dnf install -y tailscale`.
-- **Arch and Omarchy**: `pacman -Syu --needed --noconfirm tailscale`. Arch supports no partial upgrade, so refreshing the package database to install one package upgrades the machine with it; the dialog says so.
+- **Arch**: `pacman -Syu --needed --noconfirm tailscale`. Arch supports no partial upgrade, so refreshing the package database to install one package upgrades the machine with it; the dialog says so.
+- **Omarchy**: `pacman -S --needed --noconfirm tailscale`. Omarchy upgrades the machine only through `omarchy update` (a pacman hook refuses a direct `-Syu`), so the package is installed against the database the last update synced, without `-y`, which is not a partial upgrade; if pacman cannot find the file, `omarchy update` first.
 
 Each ends with `systemctl enable --now tailscaled`. Anything else is pointed at https://tailscale.com/download/linux.
 

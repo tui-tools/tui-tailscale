@@ -77,6 +77,17 @@ func (d Distro) Manager() pkgmgr.Manager {
 	return ""
 }
 
+// omarchy reports an Omarchy system, whose own update command is the only
+// way it lets the machine be upgraded.
+func (d Distro) omarchy() bool {
+	for _, id := range append([]string{d.ID}, d.Like...) {
+		if strings.HasPrefix(id, "omarchy") {
+			return true
+		}
+	}
+	return false
+}
+
 // aptFamily is the path segment of Tailscale's apt repository: "ubuntu" or
 // "debian".
 func (d Distro) aptFamily() string {
@@ -156,6 +167,24 @@ func buildInstall(d Distro) (Plan, error) {
 			enable,
 		}
 	case pkgmgr.ManagerPacman:
+		if d.omarchy() {
+			// Omarchy refuses a direct system upgrade: its pacman hook aborts
+			// any -Syu that does not come from `omarchy update`, which syncs
+			// the database and upgrades the machine as one transaction. What
+			// is left is to install against the database the last update
+			// synced, without -y, which is exactly not a partial upgrade.
+			plan.Body = "tailscale is in Arch's own repositories. Omarchy upgrades the " +
+				"machine only through `omarchy update` (its pacman hook refuses a direct " +
+				"-Syu), so the package is installed against the package database the last " +
+				"update synced — no -y, so no partial upgrade. If pacman cannot find the " +
+				"package file, run `omarchy update` first. Then tailscaled is started."
+			plan.Steps = []runner.Command{
+				{Argv: []string{"pacman", "-S", "--needed", "--noconfirm", "tailscale"},
+					Description: "Install tailscale"},
+				enable,
+			}
+			return plan, nil
+		}
 		// Arch has no supported way to install one package against a
 		// refreshed database without upgrading the rest (a bare -Sy is a
 		// partial upgrade), and a stale database on a fresh image points at

@@ -75,3 +75,21 @@ func TestTrustCAPerDistro(t *testing.T) {
 		t.Error("an unknown distribution got a plan")
 	}
 }
+
+// Omarchy's pacman hook refuses a direct -Syu: the install there is a plain
+// -S against the database `omarchy update` keeps, found on the lab's Omarchy
+// Server guest.
+func TestInstallOnOmarchyAvoidsTheUpgradeGuard(t *testing.T) {
+	plan, err := BuildCommand(Request{Action: ActionInstall,
+		Distro: ParseDistro("ID=omarchy-server\nID_LIKE=\"omarchy arch\"\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(plan.Steps[0].Argv, " "); got != "pacman -S --needed --noconfirm tailscale" {
+		t.Errorf("omarchy install = %q", got)
+	}
+	arch, _ := BuildCommand(Request{Action: ActionInstall, Distro: ParseDistro("ID=arch\n")})
+	if got := strings.Join(arch.Steps[0].Argv, " "); got != "pacman -Syu --needed --noconfirm tailscale" {
+		t.Errorf("arch install = %q", got)
+	}
+}

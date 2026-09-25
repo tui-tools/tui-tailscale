@@ -330,8 +330,9 @@ func TestInstallPlans(t *testing.T) {
 			"pacman -Syu --needed --noconfirm tailscale",
 			"systemctl enable --now tailscaled",
 		}},
+		// Omarchy's pacman hook refuses a direct -Syu outside `omarchy update`.
 		{"omarchy", omarchy, []string{
-			"pacman -Syu --needed --noconfirm tailscale",
+			"pacman -S --needed --noconfirm tailscale",
 			"systemctl enable --now tailscaled",
 		}},
 	}
