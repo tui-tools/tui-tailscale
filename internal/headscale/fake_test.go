@@ -360,9 +360,45 @@ func TestInstallAddsThePinnedRepositoryFirst(t *testing.T) {
 	if err := plan.CheckStep(plan.Verify, out); err != nil {
 		t.Errorf("the pinned key failed the check: %v", err)
 	}
+	// The download into the root-only staging directory escalates; reading the
+	// key back right after it does not.
 	lines := InstallInstructions(ubuntu(), RepoState{})
-	if !strings.HasPrefix(lines[1], "sudo curl") || strings.HasPrefix(lines[2], "sudo") {
+	download := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "sudo curl") {
+			download = i
+			break
+		}
+	}
+	if download < 0 || download+1 >= len(lines) ||
+		!strings.HasPrefix(lines[download+1], "gpg --show-keys") {
 		t.Errorf("instructions = %q", lines)
+	}
+}
+
+// TestInstallStepsUseOnlyKnownBinaries: the real backend starts only the
+// binaries in its table, so every step of the companion install, on every
+// manager, has to name one of them. A kit step the table lacks would stop the
+// install half way on a real machine.
+func TestInstallStepsUseOnlyKnownBinaries(t *testing.T) {
+	for name, d := range map[string]pkgmgr.Distro{
+		"apt":    ubuntu(),
+		"dnf":    {ID: "fedora", VersionID: "44"},
+		"pacman": {ID: "arch"},
+	} {
+		for _, build := range []func(pkgmgr.Distro, RepoState) (Plan, error){
+			BuildInstall, BuildInstallFirewall} {
+			plan, err := build(d, RepoState{})
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			for _, step := range plan.Steps {
+				if _, ok := searchPaths[step.Argv[0]]; !ok {
+					t.Errorf("%s: %q starts %s, which the real backend does not drive",
+						name, step, step.Argv[0])
+				}
+			}
+		}
 	}
 }
 

@@ -1,13 +1,13 @@
 module github.com/tui-tools/tui-tailscale
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/tui-tools/tui-kit v0.4.6
+	github.com/tui-tools/tui-kit v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

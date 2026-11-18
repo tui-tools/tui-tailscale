@@ -52,7 +52,8 @@ var searchPaths = map[string][]string{
 	// The companion install: the package manager, and the kit's steps that
 	// add the tui-tools repository — gpg reads the downloaded key back and
 	// dearmours it, chmod and tee write the keyring and the repository file,
-	// rpm and pacman-key import the key.
+	// rpm and pacman-key import the key, and rm removes the root-only staging
+	// directory under /run the key was checked in.
 	"apt-get":    {"/usr/bin/apt-get", "/bin/apt-get"},
 	"dnf":        {"/usr/bin/dnf", "/bin/dnf"},
 	"rpm":        {"/usr/bin/rpm", "/bin/rpm"},
@@ -61,6 +62,7 @@ var searchPaths = map[string][]string{
 	"gpg":        {"/usr/bin/gpg", "/bin/gpg"},
 	"chmod":      {"/usr/bin/chmod", "/bin/chmod"},
 	"tee":        {"/usr/bin/tee", "/bin/tee"},
+	"rm":         {"/usr/bin/rm", "/bin/rm"},
 }
 
 // privilegedRead marks the binaries whose reads need root. The Headscale CLI

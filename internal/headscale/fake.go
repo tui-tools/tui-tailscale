@@ -502,7 +502,7 @@ func (f *Fake) apply(cmd runner.Command) (string, error) {
 func isInstallStep(bin string) bool {
 	switch bin {
 	case "install", "curl", "gpg", "chmod", "tee", "rpm", "apt-get", "dnf",
-		"pacman", "pacman-key":
+		"pacman", "pacman-key", "rm":
 		return true
 	}
 	return false
