@@ -587,7 +587,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v1.1.2/tui-tailscale_1.1.2_linux_amd64.tar.gz | tar -xz tui-tailscale
+curl -fsSL https://github.com/tui-tools/tui-tailscale/releases/download/v1.1.3/tui-tailscale_1.1.3_linux_amd64.tar.gz | tar -xz tui-tailscale
 sudo install -m0755 tui-tailscale /usr/local/bin/tui-tailscale
 ```
 
